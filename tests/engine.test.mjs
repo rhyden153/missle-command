@@ -121,3 +121,25 @@ test('a complete undefended game reaches game over instead of stalling between w
   assert.equal(game.citiesAlive, 0)
   assert.ok(game.wave < 20)
 })
+
+test('audio events follow launches, detonations, interceptions, impacts, and wave transitions', () => {
+  const game = new MissileCommand(() => 0.5)
+  const events = []
+  game.onEvent = event => events.push(event)
+  game.start()
+  game.incoming = 1
+  game.spawnTimer = 1000
+  game.enemies = [enemyAt(601, 245)]
+  game.fire(601, 245)
+  advance(game, 1)
+  assert.deepEqual(events.slice(0, 4), ['wave', 'launch', 'explode', 'intercept'])
+  game.incoming = 0
+  advance(game, 3)
+  assert.equal(events.filter(event => event === 'clear').length, 1)
+  advance(game, 4)
+  assert.equal(events.filter(event => event === 'wave').length, 2)
+  game.enemies = game.cities.map(city => enemyAt(city.x, GROUND - 1))
+  advance(game, 0.1)
+  assert.equal(events.filter(event => event === 'impact').length, 6)
+  assert.equal(events.at(-1), 'over')
+})

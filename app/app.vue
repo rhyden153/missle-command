@@ -14,7 +14,7 @@ const canvas = ref<HTMLCanvasElement | null>(null)
 const arena = ref<HTMLElement | null>(null)
 const helpDialog = ref<HTMLDialogElement | null>(null)
 const audio = new GameAudio()
-const soundEnabled = ref(false)
+const soundEnabled = ref(true)
 const isFullscreen = ref(false)
 const fullscreenSupported = ref(false)
 const fullscreenError = ref('')
@@ -50,6 +50,7 @@ function sync() {
 }
 
 function start() {
+  audio.stop()
   audio.unlock()
   game.start()
   sync()
@@ -57,6 +58,8 @@ function start() {
 }
 
 function pause() {
+  audio.stop()
+  audio.unlock()
   game.pause()
   sync()
   if (game.phase !== 'paused') nextTick(() => canvas.value?.focus({ preventScroll: true }))
@@ -86,13 +89,14 @@ async function toggleFullscreen() {
 
 function openHelp() {
   pausedForHelp = game.phase === 'playing' || game.phase === 'intermission'
-  if (pausedForHelp) { game.pause(); sync() }
+  if (pausedForHelp) { audio.stop(); game.pause(); sync() }
   helpDialog.value?.showModal()
 }
 
 function closeHelp() { helpDialog.value?.close() }
 function onHelpClosed() {
   if (pausedForHelp && game.phase === 'paused') {
+    audio.unlock()
     game.pause()
     sync()
     nextTick(() => canvas.value?.focus({ preventScroll: true }))
@@ -140,7 +144,7 @@ function keydown(event: KeyboardEvent) {
 }
 
 function onVisibilityChange() {
-  if (document.hidden && (game.phase === 'playing' || game.phase === 'intermission')) { game.pause(); sync() }
+  if (document.hidden && (game.phase === 'playing' || game.phase === 'intermission')) { audio.stop(); game.pause(); sync() }
 }
 function onFullscreenChange() { isFullscreen.value = !!document.fullscreenElement }
 
@@ -149,7 +153,7 @@ onMounted(() => {
     const savedBest = Number(localStorage.getItem('missile-command-best'))
     game.best = Number.isFinite(savedBest) && savedBest > 0 ? Math.floor(savedBest) : 0
     persistedBest = game.best
-    soundEnabled.value = localStorage.getItem('missile-command-sound') === 'true'
+    soundEnabled.value = localStorage.getItem('missile-command-sound') !== 'false'
     audio.muted = !soundEnabled.value
   } catch { /* Private browsing can disable local storage. */ }
   game.onEvent = event => audio.play(event)

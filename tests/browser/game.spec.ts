@@ -35,6 +35,12 @@ test('desktop controls, pause, manual, fullscreen, and saved preferences work', 
   await expect(page.getByRole('dialog')).not.toBeVisible()
   await expect(page.locator('.arena-status')).toContainText('DEFENSE ACTIVE')
 
+  await page.getByRole('button', { name: 'Mute sound' }).click()
+  await expect(page.getByRole('button', { name: 'Enable sound' })).toHaveAttribute('aria-pressed', 'false')
+  await page.reload()
+  await expect(page.getByRole('button', { name: 'Enable sound' })).toBeVisible()
+  await page.getByRole('button', { name: 'START DEFENSE' }).click()
+  await page.locator('canvas').click({ position: { x: 220, y: 170 } })
   await page.getByRole('button', { name: 'Enable sound' }).click()
   await expect(page.getByRole('button', { name: 'Mute sound' })).toHaveAttribute('aria-pressed', 'true')
   await page.keyboard.press('p')
@@ -90,4 +96,28 @@ test('the layout remains within the viewport at intermediate screen sizes', asyn
     await expect(page.getByRole('button', { name: 'START DEFENSE' })).toBeInViewport()
     expect(await page.locator('.arena-hud').evaluate(element => element.scrollWidth <= element.clientWidth), `HUD fits at ${width}px`).toBe(true)
   }
+})
+
+
+test('sound starts with gameplay, explosions produce audio, and mute stops playback', async ({ page }) => {
+  await page.addInitScript(() => {
+    const original = AudioScheduledSourceNode.prototype.start
+    ;(window as any).audioStarts = 0
+    AudioScheduledSourceNode.prototype.start = function (...args) {
+      ;(window as any).audioStarts++
+      return original.apply(this, args)
+    }
+  })
+  await page.goto('/')
+  await expect(page.getByRole('button', { name: 'START DEFENSE' })).toBeEnabled()
+  expect(await page.evaluate(() => (window as any).audioStarts)).toBe(0)
+  await page.getByRole('button', { name: 'START DEFENSE' }).click()
+  await page.locator('canvas').click({ position: { x: 220, y: 170 } })
+  await expect.poll(() => page.evaluate(() => (window as any).audioStarts)).toBeGreaterThanOrEqual(4)
+  await page.getByRole('button', { name: 'Mute sound' }).click()
+  const count = await page.evaluate(() => (window as any).audioStarts)
+  await page.waitForTimeout(200)
+  await page.locator('canvas').click({ position: { x: 260, y: 170 } })
+  await page.waitForTimeout(1000)
+  expect(await page.evaluate(() => (window as any).audioStarts)).toBe(count)
 })

@@ -5,7 +5,7 @@ export type Blast = Point & { age: number; duration: number; maxRadius: number; 
 export type Particle = Point & { vx: number; vy: number; life: number; maxLife: number; color: string }
 export type City = Point & { alive: boolean; name: string }
 export type Battery = Point & { ammo: number; name: string; alive: boolean }
-export type GameEvent = 'launch' | 'intercept' | 'impact' | 'wave' | 'over'
+export type GameEvent = 'launch' | 'explode' | 'intercept' | 'impact' | 'wave' | 'clear' | 'over'
 
 export const WIDTH = 1200
 export const HEIGHT = 620
@@ -187,7 +187,7 @@ export class MissileCommand {
     }
 
     for (const missile of this.missiles) {
-      if (this.move(missile, dt)) { missile.alive = false; this.addBlast(missile.x, missile.y, true) }
+      if (this.move(missile, dt)) { missile.alive = false; this.addBlast(missile.x, missile.y, true); this.onEvent?.('explode') }
     }
     this.missiles = this.missiles.filter(missile => missile.alive)
 
@@ -233,6 +233,7 @@ export class MissileCommand {
       this.best = Math.max(this.best, this.score)
       this.phase = 'intermission'
       this.intermission = 4
+      this.onEvent?.('clear')
       this.showNotice(`SECTOR SECURED · +${bonus} SURVIVAL BONUS`, 4)
     }
   }
