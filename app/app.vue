@@ -2,6 +2,10 @@
 import { MissileCommand, WIDTH, HEIGHT, MAX_AMMO } from './game/engine'
 import { renderBattlefield } from './game/renderer'
 import { GameAudio } from './game/audio'
+import cityExplosionUrl from '../assets/city-explosion.mp3?url'
+import airExplosionUrl from '../assets/air-explosion.mp3?url'
+import batteryExplosionUrl from '../assets/battery-explosion.mp3?url'
+import launchThudUrl from '../assets/launch-thud.mp3?url'
 
 useHead({
   title: 'Missile Command — The last line of defense',
@@ -13,7 +17,7 @@ const game = new MissileCommand()
 const canvas = ref<HTMLCanvasElement | null>(null)
 const arena = ref<HTMLElement | null>(null)
 const helpDialog = ref<HTMLDialogElement | null>(null)
-const audio = new GameAudio()
+const audio = new GameAudio(cityExplosionUrl, airExplosionUrl, batteryExplosionUrl, launchThudUrl)
 const soundEnabled = ref(true)
 const isFullscreen = ref(false)
 const fullscreenSupported = ref(false)
@@ -23,6 +27,7 @@ const readState = () => ({
   phase: game.phase, score: game.score, best: game.best, wave: game.wave,
   intercepted: game.intercepted, launched: game.launched, chain: game.chain,
   citiesAlive: game.citiesAlive, totalAmmo: game.totalAmmo,
+  groundExplosionActive: game.cityExplosions.length > 0 || game.batteryExplosions.length > 0,
   selected: game.selected, incoming: game.incoming + game.enemies.length,
   batteries: game.batteries.map(battery => ({ ...battery })),
   cities: game.cities.map(city => ({ ...city })),
@@ -203,7 +208,7 @@ onBeforeUnmount(() => {
     <header class="site-header">
       <a href="/" class="brand" aria-label="Missile Command home">
         <span class="brand-mark"><svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="m8 24 5-12L26 5l-7 13-11 6Z" fill="currentColor" /><path d="m13 12-6 1-4 6 7-1m9 0-1 7-6 4 1-8M7 25l-3 3m4-7-6 6" stroke="currentColor" stroke-width="1.5" /><circle cx="20" cy="11" r="2" fill="#11150f" /></svg></span>
-        <span class="brand-name">MISSILE COMMAND<span>ARCADE DEFENSE SYSTEM</span></span>
+        <span class="brand-name">NEO<span class="brand-slash">/</span>Missle Command<span class="brand-subtitle">ARCADE DEFENSE SYSTEM</span></span>
       </a>
       <div class="header-system"><span class="status-dot" /> ALL SYSTEMS OPERATIONAL <span class="system-divider">/</span> <span class="muted-text">V. 1.0</span></div>
       <div class="header-actions">
@@ -215,7 +220,7 @@ onBeforeUnmount(() => {
 
     <main class="main-content">
       <section class="hero" aria-labelledby="game-title">
-        <div><div class="eyebrow"><span class="small-cross">+</span> THE ORIGINAL. REARMED.</div><h1 id="game-title">MISSILE COMMAND<span class="title-period">.</span></h1><p class="hero-description">Six cities. Three batteries. One last line of defense.</p></div>
+        <div><div class="eyebrow"><span class="small-cross">+</span> THE ORIGINAL, REARMED</div><h1 id="game-title">MISSILE COMMAND</h1><p class="hero-description">Six cities. Three batteries. One last line of defense.</p></div>
         <div class="personal-best"><span class="best-icon"><AppIcon name="trophy" :size="20" /></span><div><span class="micro-label">PERSONAL BEST</span><span class="best-score">{{ formatScore(state.best) }}</span></div><span class="best-local">SAVED<br>LOCALLY</span></div>
       </section>
 
@@ -234,7 +239,7 @@ onBeforeUnmount(() => {
               <button class="primary-button start-button" :disabled="!isLoaded" @click="start">{{ isLoaded ? 'START DEFENSE' : 'INITIALIZING' }}<AppIcon name="arrow" :size="18" /></button><span class="start-hint">OR PRESS <kbd>ENTER</kbd> TO BEGIN</span>
             </div>
             <div v-else-if="state.phase === 'paused'" class="game-overlay pause-overlay"><span class="overlay-eyebrow">TRANSMISSION ON HOLD</span><h2>STAND BY.</h2><p>Your cities can wait a moment.</p><button class="primary-button" @click="pause">RESUME DEFENSE<AppIcon name="play" :size="17" /></button><button class="overlay-secondary" @click="start"><AppIcon name="restart" :size="14" /> Start a new game</button></div>
-            <div v-else-if="state.phase === 'gameover'" class="game-overlay gameover-overlay"><span class="overlay-eyebrow">ALL CITIES LOST · WAVE {{ String(state.wave).padStart(2, '0') }}</span><h2>THE LAST<br>LIGHT FADES.</h2><div class="final-score"><span class="micro-label">FINAL SCORE</span><strong>{{ formatScore(state.score) }}</strong></div><p>{{ state.intercepted }} threats intercepted. One more stand?</p><button class="primary-button" @click="start">DEFEND AGAIN<AppIcon name="restart" :size="17" /></button></div>
+            <div v-else-if="state.phase === 'gameover' && !state.groundExplosionActive" class="game-overlay gameover-overlay"><span class="overlay-eyebrow">ALL CITIES LOST · WAVE {{ String(state.wave).padStart(2, '0') }}</span><h2>THE LAST<br>LIGHT FADES.</h2><div class="final-score"><span class="micro-label">FINAL SCORE</span><strong>{{ formatScore(state.score) }}</strong></div><p>{{ state.intercepted }} threats intercepted. One more stand?</p><button class="primary-button" @click="start">DEFEND AGAIN<AppIcon name="restart" :size="17" /></button></div>
             <div v-else-if="state.phase === 'intermission'" class="wave-overlay" role="status"><AppIcon name="shield" :size="28" /><span class="overlay-eyebrow">WAVE {{ String(state.wave).padStart(2, '0') }} COMPLETE</span><h2>STILL STANDING.</h2><p>Batteries rearming. Next wave in {{ state.intermission }}.</p></div>
             <div v-if="state.notice && state.phase === 'playing'" class="game-notice" role="status"><span class="status-dot" />{{ state.notice }}</div><span class="field-corner top-left" /><span class="field-corner top-right" /><span class="field-corner bottom-left" /><span class="field-corner bottom-right" />
           </div>
@@ -254,10 +259,11 @@ onBeforeUnmount(() => {
       </div>
 
       <section id="game-controls" class="controls-strip" aria-label="Game controls"><div class="controls-label"><AppIcon name="keyboard" :size="18" /><span>THE CONTROLS</span></div><div class="control-item"><svg width="16" height="19" viewBox="0 0 16 19" fill="none" aria-hidden="true"><rect x="2" y="1" width="12" height="17" rx="6" stroke="currentColor" /><path d="M8 1v6M2 7h12" stroke="currentColor" /></svg><span>Move to aim <span class="control-plus">/</span> Click to fire</span></div><div class="control-item"><span class="key-group"><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd></span><span>Select battery</span></div><div class="control-item"><kbd>P</kbd><span>Pause</span></div><button class="controls-more" @click="openHelp">All controls<AppIcon name="arrow" :size="15" /></button></section>
+      <NeoGamesBanner class="collection-section" />
       <footer class="site-footer"><span>A TRIBUTE TO THE GOLDEN AGE OF ARCADES.</span><span class="footer-center">NO EXTRA LIVES. <span>MAKE THIS ONE COUNT.</span></span><span class="footer-coordinate"><span class="tiny-cross">✳</span> EST. 1980 <span class="footer-slash">/</span> REIMAGINED TODAY</span></footer>
     </main>
 
-    <dialog ref="helpDialog" class="help-dialog" aria-labelledby="help-title" @close="onHelpClosed" @click="($event.target === helpDialog) && closeHelp()"><div class="help-content"><div class="panel-heading"><span class="eyebrow">FIELD MANUAL / 001</span><button class="icon-button" aria-label="Close instructions" @click="closeHelp"><AppIcon name="close" /></button></div><h2 id="help-title">AIM. FIRE. SURVIVE.</h2><p>Defend six cities from the incoming barrage. Lose them all and the game ends.</p><dl class="help-controls"><div><dt>Move mouse / drag on screen</dt><dd>Aim</dd></div><div><dt>Click / tap / <kbd>SPACE</kbd></dt><dd>Launch missile</dd></div><div><dt>Arrow keys</dt><dd>Move crosshair</dd></div><div><dt><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></dt><dd>Select a battery</dd></div><div><dt><kbd>A</kbd></dt><dd>Auto-select nearest battery</dd></div><div><dt><kbd>P</kbd> / <kbd>ESC</kbd></dt><dd>Pause / resume</dd></div><div><dt><kbd>M</kbd></dt><dd>Toggle sound</dd></div></dl><div class="help-tip"><AppIcon name="bolt" /><p><strong>Aim ahead of the threat.</strong> Your missiles explode at the point you choose. Catch incoming missiles in the blast to set off chain reactions and multiply your points.</p></div><p class="help-detail">Each battery carries 18 missiles and rearms between waves. Surviving cities earn 100 bonus points each, plus 5 for every unused missile. From wave 3, watch for missiles that split in midair.</p><button class="primary-button" @click="closeHelp">UNDERSTOOD<AppIcon name="arrow" :size="17" /></button></div></dialog>
+    <dialog ref="helpDialog" class="help-dialog" aria-labelledby="help-title" @close="onHelpClosed" @click="($event.target === helpDialog) && closeHelp()"><div class="help-content"><div class="panel-heading"><span class="eyebrow">FIELD MANUAL / 001</span><button class="icon-button" aria-label="Close instructions" @click="closeHelp"><AppIcon name="close" /></button></div><h2 id="help-title">AIM. FIRE. SURVIVE.</h2><p>Defend six cities from the incoming barrage. Lose them all and the game ends.</p><dl class="help-controls"><div><dt>Move mouse / drag on screen</dt><dd>Aim</dd></div><div><dt>Click / tap / <kbd>SPACE</kbd></dt><dd>Launch missile</dd></div><div><dt>Arrow keys</dt><dd>Move crosshair</dd></div><div><dt><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></dt><dd>Select a battery</dd></div><div><dt><kbd>A</kbd></dt><dd>Auto-select battery</dd></div><div><dt><kbd>P</kbd> / <kbd>ESC</kbd></dt><dd>Pause / resume</dd></div><div><dt><kbd>M</kbd></dt><dd>Toggle sound</dd></div></dl><div class="help-tip"><AppIcon name="bolt" /><p><strong>Aim ahead of the threat.</strong> Your missiles explode at the point you choose. Catch incoming missiles in the blast to set off chain reactions and multiply your points.</p></div><p class="help-detail">Each battery carries 18 missiles and rearms between waves. Surviving cities earn 100 bonus points each, plus 5 for every unused missile. From wave 3, watch for missiles that split in midair.</p><button class="primary-button" @click="closeHelp">UNDERSTOOD<AppIcon name="arrow" :size="17" /></button></div></dialog>
   </div>
 </template>
 

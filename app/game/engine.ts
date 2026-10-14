@@ -5,12 +5,14 @@ export type Blast = Point & { age: number; duration: number; maxRadius: number; 
 export type Particle = Point & { vx: number; vy: number; life: number; maxLife: number; color: string }
 export type City = Point & { alive: boolean; name: string }
 export type Battery = Point & { ammo: number; name: string; alive: boolean }
-export type GameEvent = 'launch' | 'explode' | 'intercept' | 'impact' | 'wave' | 'clear' | 'over'
+export type GroundExplosion = Point & { age: number; duration: number }
+export type GameEvent = 'launch' | 'explode' | 'intercept' | 'impact' | 'cityExplosion' | 'batteryExplosion' | 'wave' | 'clear' | 'over'
 
 export const WIDTH = 1200
 export const HEIGHT = 620
 export const GROUND = 532
 export const MAX_AMMO = 18
+const BRAVO_AUTO_DISTANCE_PENALTY = 80
 export const CITY_NAMES = ['NEW HOPE', 'SOLACE', 'EDEN', 'HAVEN', 'AURORA', 'PROMISE']
 
 export class MissileCommand {
@@ -27,6 +29,8 @@ export class MissileCommand {
   missiles: Missile[] = []
   blasts: Blast[] = []
   particles: Particle[] = []
+  cityExplosions: GroundExplosion[] = []
+  batteryExplosions: GroundExplosion[] = []
   cities: City[] = []
   batteries: Battery[] = []
   aim: Point = { x: WIDTH / 2, y: HEIGHT / 2 }
@@ -66,6 +70,8 @@ export class MissileCommand {
     this.missiles = []
     this.blasts = []
     this.particles = []
+    this.cityExplosions = []
+    this.batteryExplosions = []
     this.cooldown = 0
     this.shake = 0
     this.selected = -1
@@ -100,8 +106,11 @@ export class MissileCommand {
     if (this.phase !== 'playing' || this.cooldown > 0) return false
     const target = { x: Math.max(8, Math.min(WIDTH - 8, x)), y: Math.max(20, Math.min(GROUND - 36, y)) }
     const available = this.batteries.filter(battery => battery.alive && battery.ammo > 0)
+    // Shift each side's auto-selection boundary 40 pixels toward the center.
+    const autoDistance = (battery: Battery) => Math.abs(battery.x - target.x)
+      + (battery === this.batteries[1] ? BRAVO_AUTO_DISTANCE_PENALTY : 0)
     const battery = this.selected === -1
-      ? available.sort((a, b) => Math.abs(a.x - target.x) - Math.abs(b.x - target.x))[0]
+      ? available.sort((a, b) => autoDistance(a) - autoDistance(b))[0]
       : this.batteries[this.selected]
     if (!battery || !battery.alive || battery.ammo <= 0) {
       this.showNotice(this.selected === -1 ? 'OUT OF AMMO · HOLD THE LINE' : 'BATTERY EMPTY · PRESS A FOR AUTO', 2)
@@ -135,7 +144,7 @@ export class MissileCommand {
       const angle = this.random() * Math.PI * 2
       const speed = 18 + this.random() * (friendly ? 90 : 160)
       const life = 0.35 + this.random() * 0.65
-      this.particles.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, life, maxLife: life, color: friendly ? '#d8f69a' : '#ff8a57' })
+      this.particles.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, life, maxLife: life, color: friendly ? '#ffad45' : '#ff8a57' })
     }
   }
 
@@ -153,10 +162,14 @@ export class MissileCommand {
     dt = Math.min(Math.max(dt, 0), 0.05)
     if (this.phase === 'paused') return
     this.clock += dt
-    if (this.phase === 'ready' || this.phase === 'gameover') return
+    if (this.phase === 'ready') return
     this.cooldown = Math.max(0, this.cooldown - dt)
     this.noticeTime = Math.max(0, this.noticeTime - dt)
     this.shake = Math.max(0, this.shake - dt * 22)
+    for (const explosion of this.cityExplosions) explosion.age += dt
+    this.cityExplosions = this.cityExplosions.filter(explosion => explosion.age < explosion.duration)
+    for (const explosion of this.batteryExplosions) explosion.age += dt
+    this.batteryExplosions = this.batteryExplosions.filter(explosion => explosion.age < explosion.duration)
 
     for (const blast of this.blasts) {
       blast.age += dt
@@ -171,6 +184,9 @@ export class MissileCommand {
       particle.life -= dt
     }
     this.particles = this.particles.filter(particle => particle.life > 0)
+
+    // Let the final city's destruction finish while gameplay remains stopped.
+    if (this.phase === 'gameover') return
 
     if (this.phase === 'intermission') {
       this.intermission -= dt
@@ -211,9 +227,21 @@ export class MissileCommand {
         this.addBlast(enemy.x, enemy.y, false)
         this.shake = 5
         this.cities.forEach(city => {
-          if (city.alive && Math.abs(city.x - enemy.x) < 40) { city.alive = false; this.showNotice(`${city.name} LOST · KEEP FIGHTING`, 2.5) }
+          if (city.alive && Math.abs(city.x - enemy.x) < 40) {
+            city.alive = false
+            this.cityExplosions.push({ x: city.x, y: city.y, age: 0, duration: 5.5 })
+            this.onEvent?.('cityExplosion')
+            this.showNotice(`${city.name} LOST · KEEP FIGHTING`, 2.5)
+          }
         })
-        this.batteries.forEach(battery => { if (Math.abs(battery.x - enemy.x) < 40) { battery.alive = false; battery.ammo = 0 } })
+        this.batteries.forEach(battery => {
+          if (battery.alive && Math.abs(battery.x - enemy.x) < 40) {
+            battery.alive = false
+            battery.ammo = 0
+            this.batteryExplosions.push({ x: battery.x, y: GROUND, age: 0, duration: 5.5 })
+            this.onEvent?.('batteryExplosion')
+          }
+        })
         this.onEvent?.('impact')
       } else if (enemy.split && enemy.y > 175) {
         enemy.split = false
@@ -227,7 +255,7 @@ export class MissileCommand {
       this.phase = 'gameover'
       this.best = Math.max(this.best, this.score)
       this.onEvent?.('over')
-    } else if (this.incoming === 0 && this.enemies.length === 0 && this.missiles.length === 0 && this.blasts.length === 0) {
+    } else if (this.incoming === 0 && this.enemies.length === 0 && this.missiles.length === 0 && this.blasts.length === 0 && this.cityExplosions.length === 0 && this.batteryExplosions.length === 0) {
       const bonus = this.citiesAlive * 100 + this.totalAmmo * 5
       this.score += bonus
       this.best = Math.max(this.best, this.score)

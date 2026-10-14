@@ -27,6 +27,7 @@
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
+.collection-section { margin-top: 44px; }
 
 * { box-sizing: border-box; }
 body { margin: 0; }
@@ -46,7 +47,8 @@ button svg { pointer-events: none; }
 .brand-mark { height: 37px; width: 37px; color: var(--accent); display: grid; place-items: center; }
 .brand-mark svg { width: 35px; height: 35px; }
 .brand-name { font-family: var(--display); font-size: 21px; line-height: 1; letter-spacing: 1.15px; font-weight: 700; }
-.brand-name > span { display: block; font-family: var(--mono); font-size: 8px; letter-spacing: 1.6px; color: var(--muted); margin-top: 7px; font-weight: 400; }
+.brand-name > .brand-slash { color: var(--accent); }
+.brand-name > .brand-subtitle { display: block; font-family: var(--mono); font-size: 8px; letter-spacing: 1.6px; color: var(--muted); margin-top: 7px; font-weight: 400; }
 .header-system { display: flex; align-items: center; gap: 9px; font-family: var(--mono); font-size: 9px; letter-spacing: .6px; color: #a0a88e; }
 .status-dot { width: 5px; height: 5px; display: inline-block; background: var(--accent); border-radius: 50%; flex-shrink: 0; }
 .system-divider { margin: 0 6px; color: #4b5143; }
@@ -105,7 +107,7 @@ h1 { font-family: var(--display); font-size: 66px; line-height: 1.04; font-weigh
 .battlefield.is-playing canvas { cursor: none; }
 .game-overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; pointer-events: none; padding: 15px 20px 44px; }
 .game-overlay button { pointer-events: auto; }
-.ready-overlay { background: radial-gradient(ellipse 26% 45% at 50% 45%, #11170f88, transparent 150%); }
+.ready-overlay { background: radial-gradient(ellipse 26% 45% at 50% 45%, #10182788, transparent 150%); }
 .intro-reticle { color: var(--accent); margin-bottom: 16px; position: relative; width: 46px; height: 46px; display: grid; place-items: center; }
 .intro-reticle:before, .intro-reticle:after { content: ''; position: absolute; inset: 0; border: 1px solid #d4ee993a; clip-path: polygon(0 0, 22% 0, 22% 4%, 4% 4%, 4% 22%, 0 22%, 0 0, 100% 100%, 78% 100%, 78% 96%, 96% 96%, 96% 78%, 100% 78%, 100% 100%); }
 .intro-reticle:after { transform: rotate(90deg); }
@@ -118,7 +120,7 @@ h1 { font-family: var(--display); font-size: 66px; line-height: 1.04; font-weigh
 .start-button { min-width: 204px; }
 .start-hint { font-family: var(--mono); font-size: 7px; letter-spacing: 1px; color: #778467; display: flex; align-items: center; gap: 6px; margin-top: 14px; }
 .start-hint kbd { background: none; font-size: 7px; padding: 2px 4px; border-color: #56634777; min-width: 0; height: 17px; color: #9daa88; }
-.pause-overlay, .gameover-overlay { background: #10150fd9; backdrop-filter: blur(4px); }
+.pause-overlay, .gameover-overlay { background: #10151ed9; backdrop-filter: blur(4px); }
 .pause-overlay h2 { margin-bottom: 17px; }
 .overlay-secondary { border: 0; background: transparent; display: flex; align-items: center; gap: 8px; color: #adb89a; font-size: 11px; margin-top: 18px; padding: 8px; }
 .overlay-secondary:hover { color: var(--accent); }
@@ -127,7 +129,7 @@ h1 { font-family: var(--display); font-size: 66px; line-height: 1.04; font-weigh
 .final-score { display: flex; align-items: center; gap: 12px; margin: 0 0 13px; }
 .final-score strong { font-family: var(--mono); font-size: 27px; color: var(--accent); font-weight: 500; }
 .gameover-overlay p { margin-bottom: 19px; }
-.wave-overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; background: #10150f99; padding-bottom: 50px; text-align: center; color: var(--accent); }
+.wave-overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; background: #10151e99; padding-bottom: 50px; text-align: center; color: var(--accent); }
 .wave-overlay .overlay-eyebrow { margin-top: 20px; }
 .wave-overlay h2 { font-family: var(--display); font-size: 54px; font-weight: 600; margin: 10px 0; }
 .wave-overlay p { color: #aeb99c; font-size: 12px; margin: 0; }
@@ -311,7 +313,7 @@ kbd { font-family: var(--mono); font-size: 9px; display: inline-flex; align-item
   .site-header { height: 69px; padding: 0 18px; gap: 10px; } .brand { gap: 8px; }
   .brand-mark { width: 29px; height: 31px; } .brand-mark svg { width: 29px; height: 29px; }
   .brand-name { font-size: 18px; letter-spacing: .7px; }
-  .brand-name > span { font-size: 6px; letter-spacing: 1.3px; margin-top: 6px; }
+  .brand-name > .brand-subtitle { font-size: 6px; letter-spacing: 1.3px; margin-top: 6px; }
   .header-actions { gap: 12px; } .header-separator { display: none; }
   .help-button { font-size: 0; gap: 0; min-width: 32px; min-height: 36px; justify-content: center; }
   .help-button svg { width: 18px; height: 18px; } .sound-button { min-width: 32px; min-height: 36px; }

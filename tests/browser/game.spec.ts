@@ -1,5 +1,10 @@
 import { test, expect } from '@playwright/test'
 
+// Vercel serves this script in production; the local Nitro server does not.
+test.beforeEach(async ({ context }) => {
+  await context.route('**/_vercel/insights/script.js', route => route.fulfill({ contentType: 'application/javascript', body: '' }))
+})
+
 test('desktop controls, pause, manual, fullscreen, and saved preferences work', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
@@ -67,6 +72,7 @@ test('desktop controls, pause, manual, fullscreen, and saved preferences work', 
 
 test('phone layout fits the screen and supports touch gameplay', async ({ browser }) => {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 })
+  await context.route('**/_vercel/insights/script.js', route => route.fulfill({ contentType: 'application/javascript', body: '' }))
   const page = await context.newPage()
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
@@ -101,11 +107,13 @@ test('the layout remains within the viewport at intermediate screen sizes', asyn
 
 test('sound starts with gameplay, explosions produce audio, and mute stops playback', async ({ page }) => {
   await page.addInitScript(() => {
-    const original = AudioScheduledSourceNode.prototype.start
     ;(window as any).audioStarts = 0
-    AudioScheduledSourceNode.prototype.start = function (...args) {
-      ;(window as any).audioStarts++
-      return original.apply(this, args)
+    for (const prototype of [OscillatorNode.prototype, AudioBufferSourceNode.prototype]) {
+      const original = prototype.start
+      prototype.start = function (...args) {
+        ;(window as any).audioStarts++
+        return original.apply(this, args)
+      }
     }
   })
   await page.goto('/')
