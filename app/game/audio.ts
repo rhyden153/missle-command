@@ -1,32 +1,44 @@
 import type { GameEvent } from './engine'
 
+type RecordingName = 'cityExplosion' | 'airExplosion' | 'batteryExplosion' | 'launchThud'
+type Recording = { url: string; buffer: AudioBuffer | null; loading: Promise<AudioBuffer | null> | null }
+const RECORDING_EVENTS: Partial<Record<GameEvent, RecordingName>> = {
+  launch: 'launchThud', explode: 'airExplosion', intercept: 'airExplosion',
+  cityExplosion: 'cityExplosion', batteryExplosion: 'batteryExplosion',
+}
+const WAVE_NOTES = [330, 440, 660]
+const CLEAR_NOTES = [523, 659, 784, 1047]
+const OVER_NOTES = [330, 262, 196, 98]
+const recording = (url: string): Recording => ({ url, buffer: null, loading: null })
+
 /** Procedural arcade effects and the supplied launch and explosion recordings. */
 export class GameAudio {
   private context: AudioContext | null = null
   private master: GainNode | null = null
   private noise: AudioBuffer | null = null
-  private sources = new Set<AudioScheduledSourceNode>()
+  private sources = new Map<AudioScheduledSourceNode, () => void>()
   private lastPlayed = new Map<GameEvent, number>()
   private isMuted = false
-  private cityExplosion: AudioBuffer | null = null
-  private cityExplosionLoading: Promise<AudioBuffer | null> | null = null
-  private airExplosion: AudioBuffer | null = null
-  private airExplosionLoading: Promise<AudioBuffer | null> | null = null
-  private batteryExplosion: AudioBuffer | null = null
-  private batteryExplosionLoading: Promise<AudioBuffer | null> | null = null
-  private launchThud: AudioBuffer | null = null
-  private launchThudLoading: Promise<AudioBuffer | null> | null = null
+  private recordings: Record<RecordingName, Recording>
+  private loadController: AbortController | null = null
+  private disposed = false
   private playbackGeneration = 0
 
-  constructor(private cityExplosionUrl: string, private airExplosionUrl: string, private batteryExplosionUrl: string, private launchThudUrl: string) {}
+  constructor(cityExplosionUrl: string, airExplosionUrl: string, batteryExplosionUrl: string, launchThudUrl: string) {
+    this.recordings = {
+      cityExplosion: recording(cityExplosionUrl), airExplosion: recording(airExplosionUrl),
+      batteryExplosion: recording(batteryExplosionUrl), launchThud: recording(launchThudUrl),
+    }
+  }
 
-  private loadRecording(ctx: AudioContext, url: string) {
-    return fetch(url)
+  private loadRecording(ctx: AudioContext, sample: Recording, signal: AbortSignal) {
+    return fetch(sample.url, { signal })
       .then(response => {
         if (!response.ok) throw new Error('Sound recording unavailable')
         return response.arrayBuffer()
       })
       .then(data => ctx.decodeAudioData(data))
+      .then(buffer => { if (this.context === ctx) sample.buffer = buffer; return buffer })
       .catch(() => null)
   }
 
@@ -38,7 +50,7 @@ export class GameAudio {
   }
 
   unlock() {
-    if (this.muted) return
+    if (this.muted || this.disposed) return
     try {
       if (!this.context) {
         const ctx = new AudioContext()
@@ -49,14 +61,8 @@ export class GameAudio {
         this.noise = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate)
         const samples = this.noise.getChannelData(0)
         for (let i = 0; i < samples.length; i++) samples[i] = Math.random() * 2 - 1
-        this.cityExplosionLoading = this.loadRecording(ctx, this.cityExplosionUrl)
-          .then(buffer => { if (this.context === ctx) this.cityExplosion = buffer; return buffer })
-        this.airExplosionLoading = this.loadRecording(ctx, this.airExplosionUrl)
-          .then(buffer => { if (this.context === ctx) this.airExplosion = buffer; return buffer })
-        this.batteryExplosionLoading = this.loadRecording(ctx, this.batteryExplosionUrl)
-          .then(buffer => { if (this.context === ctx) this.batteryExplosion = buffer; return buffer })
-        this.launchThudLoading = this.loadRecording(ctx, this.launchThudUrl)
-          .then(buffer => { if (this.context === ctx) this.launchThud = buffer; return buffer })
+        this.loadController = new AbortController()
+        for (const sample of Object.values(this.recordings)) sample.loading = this.loadRecording(ctx, sample, this.loadController.signal)
       }
       if (this.context.state === 'suspended') void this.context.resume().catch(() => {})
     } catch { /* Audio is optional when unsupported by the browser. */ }
@@ -72,15 +78,24 @@ export class GameAudio {
     if (filter) { source.connect(filter); filter.connect(gain) }
     else source.connect(gain)
     gain.connect(this.master!)
-    this.sources.add(source)
-    source.onended = () => {
+    this.startSource(source, start, start + duration, gain, filter)
+  }
+
+  private startSource(source: AudioScheduledSourceNode, start?: number, end?: number, gain?: GainNode, filter?: BiquadFilterNode) {
+    const cleanup = () => {
+      if (!this.sources.delete(source)) return
+      source.onended = null
       source.disconnect()
       filter?.disconnect()
-      gain.disconnect()
-      this.sources.delete(source)
+      gain?.disconnect()
     }
-    source.start(start)
-    source.stop(start + duration)
+    this.sources.set(source, cleanup)
+    source.onended = cleanup
+    try {
+      if (start === undefined) source.start()
+      else source.start(start)
+      if (end !== undefined) source.stop(end)
+    } catch (error) { cleanup(); throw error }
   }
 
   private tone(from: number, to: number, duration: number, volume: number, type: OscillatorType = 'triangle', delay = 0) {
@@ -107,9 +122,14 @@ export class GameAudio {
     const source = this.context!.createBufferSource()
     source.buffer = buffer
     source.connect(this.master!)
-    this.sources.add(source)
-    source.onended = () => { source.disconnect(); this.sources.delete(source) }
-    source.start()
+    this.startSource(source)
+  }
+
+  private fallback(event: GameEvent) {
+    if (event === 'launch') { this.tone(750, 160, 0.18, 0.15); this.burst(0.14, 0.14, 2600) }
+    else if (event === 'cityExplosion' || event === 'batteryExplosion' || event === 'impact') {
+      this.tone(85, 24, 0.7, 0.3, 'sine'); this.burst(0.85, 0.5, 950)
+    } else { this.tone(130, 35, 0.4, 0.22, 'sine'); this.burst(0.48, 0.38, 1800) }
   }
 
   play(event: GameEvent) {
@@ -130,38 +150,31 @@ export class GameAudio {
         case 'intercept':
         case 'batteryExplosion':
         case 'cityExplosion': {
-          const city = event === 'cityExplosion'
-          const battery = event === 'batteryExplosion'
-          const launch = event === 'launch'
-          const buffer = city ? this.cityExplosion : battery ? this.batteryExplosion : launch ? this.launchThud : this.airExplosion
-          const loading = city ? this.cityExplosionLoading : battery ? this.batteryExplosionLoading : launch ? this.launchThudLoading : this.airExplosionLoading
-          if (buffer) this.playRecording(buffer)
+          const sample = this.recordings[RECORDING_EVENTS[event]!]
+          if (sample.buffer) this.playRecording(sample.buffer)
           else {
             const generation = this.playbackGeneration
-            void loading?.then(buffer => {
+            void sample.loading?.then(buffer => {
               if (generation !== this.playbackGeneration || this.muted || ctx.state === 'closed') return
               try {
                 if (buffer) this.playRecording(buffer)
-                else if (launch) { this.tone(750, 160, 0.18, 0.15); this.burst(0.14, 0.14, 2600) }
-                else if (city || battery) { this.tone(85, 24, 0.7, 0.3, 'sine'); this.burst(0.85, 0.5, 950) }
-                else { this.tone(130, 35, 0.4, 0.22, 'sine'); this.burst(0.48, 0.38, 1800) }
+                else this.fallback(event)
               } catch { /* A delayed decode must never interrupt gameplay. */ }
             })
           }
           break
         }
         case 'impact':
-          this.tone(85, 24, 0.7, 0.3, 'sine')
-          this.burst(0.85, 0.5, 950)
+          this.fallback(event)
           break
         case 'wave':
-          ;[330, 440, 660].forEach((note, i) => this.tone(note, note, 0.22, 0.13, 'square', i * 0.14))
+          for (let i = 0; i < WAVE_NOTES.length; i++) this.tone(WAVE_NOTES[i]!, WAVE_NOTES[i]!, 0.22, 0.13, 'square', i * 0.14)
           break
         case 'clear':
-          ;[523, 659, 784, 1047].forEach((note, i) => this.tone(note, note, 0.36, 0.16, 'triangle', i * 0.12))
+          for (let i = 0; i < CLEAR_NOTES.length; i++) this.tone(CLEAR_NOTES[i]!, CLEAR_NOTES[i]!, 0.36, 0.16, 'triangle', i * 0.12)
           break
         case 'over':
-          ;[330, 262, 196, 98].forEach((note, i) => this.tone(note, note * 0.9, 0.55, 0.19, 'triangle', i * 0.24))
+          for (let i = 0; i < OVER_NOTES.length; i++) this.tone(OVER_NOTES[i]!, OVER_NOTES[i]! * 0.9, 0.55, 0.19, 'triangle', i * 0.24)
           break
       }
     } catch { /* Audio failures must never interrupt the game loop. */ }
@@ -169,25 +182,23 @@ export class GameAudio {
 
   stop() {
     this.playbackGeneration++
-    for (const source of this.sources) {
+    for (const [source, cleanup] of this.sources) {
       try { source.stop() } catch { /* Already ended. */ }
+      cleanup()
     }
     this.lastPlayed.clear()
   }
 
   dispose() {
+    this.disposed = true
     this.stop()
+    this.loadController?.abort()
+    this.loadController = null
+    this.master?.disconnect()
     if (this.context) void this.context.close().catch(() => {})
     this.context = null
     this.master = null
     this.noise = null
-    this.cityExplosion = null
-    this.cityExplosionLoading = null
-    this.airExplosion = null
-    this.airExplosionLoading = null
-    this.batteryExplosion = null
-    this.batteryExplosionLoading = null
-    this.launchThud = null
-    this.launchThudLoading = null
+    for (const sample of Object.values(this.recordings)) { sample.buffer = null; sample.loading = null }
   }
 }

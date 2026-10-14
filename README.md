@@ -52,6 +52,8 @@ To preview the production build manually, run `npm run preview`.
 
 ## Project structure
 
+The simulation compacts entity arrays in place and reuses scratch lists while preserving collision order and random-number use. The renderer shares fixed scenery geometry, star data, and explosion palettes. HUD snapshots reuse unchanged data, and paused or otherwise static scenes redraw only when needed. Audio samples share one loader; stopping playback immediately disconnects active sources, and disposal aborts pending loads and releases decoded buffers.
+
 - `app/app.vue` — interface, input handling, and browser lifecycle
 - `app/game/engine.ts` — game simulation, independent of the UI
 - `app/game/renderer.ts` — battlefield, terrain, cities, missiles, and effects

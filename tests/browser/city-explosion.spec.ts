@@ -25,8 +25,8 @@ async function openExplosionFixture(page: Page) {
           const ctx=document.querySelector('canvas').getContext('2d');
           const sampleStarts=[]; let sampleStops=0, airStarts=0, airStops=0, batteryStarts=0, batteryStops=0, launchStarts=0, launchStops=0;
           const start=AudioBufferSourceNode.prototype.start, stop=AudioBufferSourceNode.prototype.stop;
-          AudioBufferSourceNode.prototype.start=function(...args){if(this.buffer?.duration>1)sampleStarts.push(this.buffer.duration);if(this.buffer===audio.airExplosion)airStarts++;if(this.buffer===audio.batteryExplosion)batteryStarts++;if(this.buffer===audio.launchThud)launchStarts++;return start.apply(this,args)};
-          AudioBufferSourceNode.prototype.stop=function(...args){if(this.buffer?.duration>1)sampleStops++;if(this.buffer===audio.airExplosion)airStops++;if(this.buffer===audio.batteryExplosion)batteryStops++;if(this.buffer===audio.launchThud)launchStops++;return stop.apply(this,args)};
+          AudioBufferSourceNode.prototype.start=function(...args){if(this.buffer?.duration>1)sampleStarts.push(this.buffer.duration);if(this.buffer===audio.recordings.airExplosion.buffer)airStarts++;if(this.buffer===audio.recordings.batteryExplosion.buffer)batteryStarts++;if(this.buffer===audio.recordings.launchThud.buffer)launchStarts++;return start.apply(this,args)};
+          AudioBufferSourceNode.prototype.stop=function(...args){if(this.buffer?.duration>1)sampleStops++;if(this.buffer===audio.recordings.airExplosion.buffer)airStops++;if(this.buffer===audio.recordings.batteryExplosion.buffer)batteryStops++;if(this.buffer===audio.recordings.launchThud.buffer)launchStops++;return stop.apply(this,args)};
           game.onEvent=event=>audio.play(event);
           const render=()=>renderBattlefield(ctx,game);
           const advance=seconds=>{for(let t=0;t<seconds;t+=0.025)game.update(0.025);render()};
@@ -58,7 +58,7 @@ test('city destruction renders a rising cloud and plays the supplied recording',
   page.on('pageerror', error => errors.push(error.message))
   await openExplosionFixture(page)
   await page.getByRole('button', { name: 'Enable audio' }).click()
-  await expect.poll(() => page.evaluate(() => (window as any).fixture.audio.cityExplosion?.duration ?? 0)).toBeGreaterThan(1)
+  await expect.poll(() => page.evaluate(() => (window as any).fixture.audio.recordings.cityExplosion.buffer?.duration ?? 0)).toBeGreaterThan(1)
   await page.getByRole('button', { name: 'Destroy city' }).click()
   expect(await page.evaluate(() => (window as any).fixture.sampleStarts.length)).toBe(1)
   await page.evaluate(() => (window as any).fixture.advance(0.2))
@@ -102,7 +102,7 @@ test('air fireballs keep the blast radius, cool into smoke, and use the supplied
   page.on('pageerror', error => errors.push(error.message))
   await openExplosionFixture(page)
   await page.getByRole('button', { name: 'Enable audio' }).click()
-  await expect.poll(() => page.evaluate(() => (window as any).fixture.audio.airExplosion?.duration ?? 0)).toBeGreaterThan(0)
+  await expect.poll(() => page.evaluate(() => (window as any).fixture.audio.recordings.airExplosion.buffer?.duration ?? 0)).toBeGreaterThan(0)
   await page.getByRole('button', { name: 'Air burst' }).click()
   await page.evaluate(() => (window as any).fixture.advance(1.25))
   expect(await page.evaluate(() => (window as any).fixture.airStarts)).toBe(1)
@@ -153,7 +153,7 @@ test('battery destruction uses a smaller nuclear cloud and its own recording', a
   page.on('pageerror', error => errors.push(error.message))
   await openExplosionFixture(page)
   await page.getByRole('button', { name: 'Enable audio' }).click()
-  await expect.poll(() => page.evaluate(() => (window as any).fixture.audio.batteryExplosion?.duration ?? 0)).toBeGreaterThan(0)
+  await expect.poll(() => page.evaluate(() => (window as any).fixture.audio.recordings.batteryExplosion.buffer?.duration ?? 0)).toBeGreaterThan(0)
   await page.getByRole('button', { name: 'Destroy battery' }).click()
   expect(await page.evaluate(() => (window as any).fixture.batteryStarts)).toBe(1)
   await page.evaluate(() => (window as any).fixture.advance(0.2))
@@ -200,7 +200,7 @@ test('battery destruction uses a smaller nuclear cloud and its own recording', a
 test('launch thud plays for accepted shots and respects pause and mute', async ({ page }) => {
   await openExplosionFixture(page)
   await page.getByRole('button', { name: 'Enable audio' }).click()
-  await expect.poll(() => page.evaluate(() => (window as any).fixture.audio.launchThud?.duration ?? 0)).toBeGreaterThan(0)
+  await expect.poll(() => page.evaluate(() => (window as any).fixture.audio.recordings.launchThud.buffer?.duration ?? 0)).toBeGreaterThan(0)
   await page.getByRole('button', { name: 'Air burst' }).click()
   expect(await page.evaluate(() => (window as any).fixture.launchStarts)).toBe(1)
   expect(await page.evaluate(() => (window as any).fixture.game.fire(328,230))).toBe(false)

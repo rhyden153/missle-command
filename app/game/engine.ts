@@ -15,6 +15,26 @@ export const MAX_AMMO = 18
 const BRAVO_AUTO_DISTANCE_PENALTY = 80
 export const CITY_NAMES = ['NEW HOPE', 'SOLACE', 'EDEN', 'HAVEN', 'AURORA', 'PROMISE']
 
+/** Stable compaction preserves collision order without replacing the entity array. */
+function compact<T>(items: T[], keep: (item: T) => boolean) {
+  let write = 0
+  for (let read = 0; read < items.length; read++) {
+    const item = items[read]!
+    if (keep(item)) items[write++] = item
+  }
+  items.length = write
+}
+
+const isAlive = (missile: Missile) => missile.alive
+const isActiveBlast = (blast: Blast) => blast.age < blast.duration
+const isActiveExplosion = (explosion: GroundExplosion) => explosion.age < explosion.duration
+const isActiveParticle = (particle: Particle) => particle.life > 0
+
+function updateExplosions(explosions: GroundExplosion[], dt: number) {
+  for (const explosion of explosions) explosion.age += dt
+  compact(explosions, isActiveExplosion)
+}
+
 export class MissileCommand {
   phase: Phase = 'ready'
   previousPhase: 'playing' | 'intermission' = 'playing'
@@ -36,7 +56,6 @@ export class MissileCommand {
   aim: Point = { x: WIDTH / 2, y: HEIGHT / 2 }
   aimVisible = false
   clock = 0
-  waveTime = 0
   incoming = 0
   spawnTimer = 1
   intermission = 0
@@ -46,14 +65,24 @@ export class MissileCommand {
   noticeTime = 0
   onEvent?: (event: GameEvent) => void
   private random: () => number
+  private targets: Point[] = []
+  private children: Missile[] = []
 
   constructor(random = Math.random) {
     this.random = random
     this.resetCities()
   }
 
-  get citiesAlive() { return this.cities.filter(city => city.alive).length }
-  get totalAmmo() { return this.batteries.reduce((total, battery) => total + battery.ammo, 0) }
+  get citiesAlive() {
+    let count = 0
+    for (const city of this.cities) if (city.alive) count++
+    return count
+  }
+  get totalAmmo() {
+    let total = 0
+    for (const battery of this.batteries) total += battery.ammo
+    return total
+  }
 
   private resetCities() {
     this.cities = [205, 328, 460, 742, 869, 992].map((x, i) => ({ x, y: GROUND, alive: true, name: CITY_NAMES[i]! }))
@@ -66,12 +95,14 @@ export class MissileCommand {
     this.intercepted = 0
     this.launched = 0
     this.chain = 0
-    this.enemies = []
-    this.missiles = []
-    this.blasts = []
-    this.particles = []
-    this.cityExplosions = []
-    this.batteryExplosions = []
+    this.enemies.length = 0
+    this.missiles.length = 0
+    this.blasts.length = 0
+    this.particles.length = 0
+    this.cityExplosions.length = 0
+    this.batteryExplosions.length = 0
+    this.targets.length = 0
+    this.children.length = 0
     this.cooldown = 0
     this.shake = 0
     this.selected = -1
@@ -83,10 +114,9 @@ export class MissileCommand {
 
   private beginWave() {
     this.phase = 'playing'
-    this.waveTime = 0
     this.incoming = 10 + this.wave * 3
     this.spawnTimer = 1.3
-    this.batteries.forEach(battery => { battery.ammo = MAX_AMMO; battery.alive = true })
+    for (const battery of this.batteries) { battery.ammo = MAX_AMMO; battery.alive = true }
     this.showNotice(`WAVE ${String(this.wave).padStart(2, '0')} · INCOMING THREATS`, 3)
     this.onEvent?.('wave')
   }
@@ -105,13 +135,17 @@ export class MissileCommand {
   fire(x: number, y: number) {
     if (this.phase !== 'playing' || this.cooldown > 0) return false
     const target = { x: Math.max(8, Math.min(WIDTH - 8, x)), y: Math.max(20, Math.min(GROUND - 36, y)) }
-    const available = this.batteries.filter(battery => battery.alive && battery.ammo > 0)
-    // Shift each side's auto-selection boundary 40 pixels toward the center.
-    const autoDistance = (battery: Battery) => Math.abs(battery.x - target.x)
-      + (battery === this.batteries[1] ? BRAVO_AUTO_DISTANCE_PENALTY : 0)
-    const battery = this.selected === -1
-      ? available.sort((a, b) => autoDistance(a) - autoDistance(b))[0]
-      : this.batteries[this.selected]
+    let battery: Battery | undefined
+    if (this.selected === -1) {
+      let nearest = Infinity
+      for (let i = 0; i < this.batteries.length; i++) {
+        const candidate = this.batteries[i]!
+        if (!candidate.alive || candidate.ammo <= 0) continue
+        // Shift each side's auto-selection boundary 40 pixels toward the center.
+        const distance = Math.abs(candidate.x - target.x) + (i === 1 ? BRAVO_AUTO_DISTANCE_PENALTY : 0)
+        if (!battery || distance < nearest) { battery = candidate; nearest = distance }
+      }
+    } else battery = this.batteries[this.selected]
     if (!battery || !battery.alive || battery.ammo <= 0) {
       this.showNotice(this.selected === -1 ? 'OUT OF AMMO · HOLD THE LINE' : 'BATTERY EMPTY · PRESS A FOR AUTO', 2)
       return false
@@ -127,7 +161,10 @@ export class MissileCommand {
   private showNotice(message: string, duration: number) { this.notice = message; this.noticeTime = duration }
 
   private spawnEnemy() {
-    const targets: Point[] = [...this.cities.filter(city => city.alive), ...this.batteries.filter(battery => battery.alive)]
+    const targets = this.targets
+    targets.length = 0
+    for (const city of this.cities) if (city.alive) targets.push(city)
+    for (const battery of this.batteries) if (battery.alive) targets.push(battery)
     if (!targets.length) return
     const target = targets[Math.floor(this.random() * targets.length)]!
     const x = 45 + this.random() * (WIDTH - 90)
@@ -136,6 +173,7 @@ export class MissileCommand {
       speed: 34 + this.wave * 5 + this.random() * 10,
       alive: true, split: this.wave >= 3 && this.random() < Math.min(0.3, this.wave * 0.035),
     })
+    targets.length = 0
   }
 
   private addBlast(x: number, y: number, friendly: boolean, chain = 0) {
@@ -166,24 +204,22 @@ export class MissileCommand {
     this.cooldown = Math.max(0, this.cooldown - dt)
     this.noticeTime = Math.max(0, this.noticeTime - dt)
     this.shake = Math.max(0, this.shake - dt * 22)
-    for (const explosion of this.cityExplosions) explosion.age += dt
-    this.cityExplosions = this.cityExplosions.filter(explosion => explosion.age < explosion.duration)
-    for (const explosion of this.batteryExplosions) explosion.age += dt
-    this.batteryExplosions = this.batteryExplosions.filter(explosion => explosion.age < explosion.duration)
+    updateExplosions(this.cityExplosions, dt)
+    updateExplosions(this.batteryExplosions, dt)
 
     for (const blast of this.blasts) {
       blast.age += dt
       const progress = blast.age / blast.duration
       blast.radius = blast.maxRadius * Math.min(1, progress * 4) * Math.min(1, (1 - progress) * 3)
     }
-    this.blasts = this.blasts.filter(blast => blast.age < blast.duration)
+    compact(this.blasts, isActiveBlast)
     for (const particle of this.particles) {
       particle.x += particle.vx * dt
       particle.y += particle.vy * dt
       particle.vy += 28 * dt
       particle.life -= dt
     }
-    this.particles = this.particles.filter(particle => particle.life > 0)
+    compact(this.particles, isActiveParticle)
 
     // Let the final city's destruction finish while gameplay remains stopped.
     if (this.phase === 'gameover') return
@@ -194,7 +230,6 @@ export class MissileCommand {
       return
     }
 
-    this.waveTime += dt
     this.spawnTimer -= dt
     if (this.incoming > 0 && this.spawnTimer <= 0) {
       this.spawnEnemy()
@@ -205,11 +240,15 @@ export class MissileCommand {
     for (const missile of this.missiles) {
       if (this.move(missile, dt)) { missile.alive = false; this.addBlast(missile.x, missile.y, true); this.onEvent?.('explode') }
     }
-    this.missiles = this.missiles.filter(missile => missile.alive)
+    compact(this.missiles, isAlive)
 
-    const children: Missile[] = []
+    const children = this.children
+    children.length = 0
     for (const enemy of this.enemies) {
-      const hit = this.blasts.find(blast => blast.friendly && Math.hypot(enemy.x - blast.x, enemy.y - blast.y) <= blast.radius)
+      let hit: Blast | undefined
+      for (const blast of this.blasts) {
+        if (blast.friendly && Math.hypot(enemy.x - blast.x, enemy.y - blast.y) <= blast.radius) { hit = blast; break }
+      }
       if (hit) {
         enemy.alive = false
         this.intercepted++
@@ -226,30 +265,36 @@ export class MissileCommand {
         enemy.alive = false
         this.addBlast(enemy.x, enemy.y, false)
         this.shake = 5
-        this.cities.forEach(city => {
+        for (const city of this.cities) {
           if (city.alive && Math.abs(city.x - enemy.x) < 40) {
             city.alive = false
             this.cityExplosions.push({ x: city.x, y: city.y, age: 0, duration: 5.5 })
             this.onEvent?.('cityExplosion')
             this.showNotice(`${city.name} LOST · KEEP FIGHTING`, 2.5)
           }
-        })
-        this.batteries.forEach(battery => {
+        }
+        for (const battery of this.batteries) {
           if (battery.alive && Math.abs(battery.x - enemy.x) < 40) {
             battery.alive = false
             battery.ammo = 0
             this.batteryExplosions.push({ x: battery.x, y: GROUND, age: 0, duration: 5.5 })
             this.onEvent?.('batteryExplosion')
           }
-        })
+        }
         this.onEvent?.('impact')
       } else if (enemy.split && enemy.y > 175) {
         enemy.split = false
-        const target = this.cities.filter(city => city.alive)[Math.floor(this.random() * this.citiesAlive)]
+        let target: City | undefined
+        let cityIndex = Math.floor(this.random() * this.citiesAlive)
+        for (const city of this.cities) {
+          if (city.alive && cityIndex-- === 0) { target = city; break }
+        }
         if (target) children.push({ ...enemy, from: { x: enemy.x, y: enemy.y }, target: { x: target.x, y: target.y }, speed: enemy.speed * 1.08, split: false })
       }
     }
-    this.enemies = [...this.enemies.filter(enemy => enemy.alive), ...children]
+    compact(this.enemies, isAlive)
+    for (const child of children) this.enemies.push(child)
+    children.length = 0
 
     if (this.citiesAlive === 0) {
       this.phase = 'gameover'

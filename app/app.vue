@@ -2,6 +2,7 @@
 import { MissileCommand, WIDTH, HEIGHT, MAX_AMMO } from './game/engine'
 import { renderBattlefield } from './game/renderer'
 import { GameAudio } from './game/audio'
+import { readHudState } from './game/hud'
 import cityExplosionUrl from '../assets/city-explosion.mp3?url'
 import airExplosionUrl from '../assets/air-explosion.mp3?url'
 import batteryExplosionUrl from '../assets/battery-explosion.mp3?url'
@@ -23,17 +24,7 @@ const isFullscreen = ref(false)
 const fullscreenSupported = ref(false)
 const fullscreenError = ref('')
 const isLoaded = ref(false)
-const readState = () => ({
-  phase: game.phase, score: game.score, best: game.best, wave: game.wave,
-  intercepted: game.intercepted, launched: game.launched, chain: game.chain,
-  citiesAlive: game.citiesAlive, totalAmmo: game.totalAmmo,
-  groundExplosionActive: game.cityExplosions.length > 0 || game.batteryExplosions.length > 0,
-  selected: game.selected, incoming: game.incoming + game.enemies.length,
-  batteries: game.batteries.map(battery => ({ ...battery })),
-  cities: game.cities.map(city => ({ ...city })),
-  notice: game.noticeTime > 0 ? game.notice : '', intermission: Math.ceil(game.intermission),
-})
-const state = shallowRef(readState())
+const state = shallowRef(readHudState(game))
 const formatScore = (score: number) => String(score).padStart(6, '0')
 const active = computed(() => ['playing', 'paused', 'intermission'].includes(state.value.phase))
 const status = computed(() => ({ ready: 'AWAITING COMMAND', playing: 'DEFENSE ACTIVE', paused: 'SYSTEM PAUSED', intermission: 'SECTOR SECURED', gameover: 'SIGNAL LOST' })[state.value.phase])
@@ -45,9 +36,11 @@ let lastFrame = 0
 let lastSync = 0
 let reducedMotion = false
 let pausedForHelp = false
+let needsRedraw = true
 
 function sync() {
-  state.value = readState()
+  const next = readHudState(game, state.value)
+  if (next !== state.value) { state.value = next; needsRedraw = true }
   if (game.best > persistedBest) {
     persistedBest = game.best
     try { localStorage.setItem('missile-command-best', String(game.best)) } catch { /* Storage is optional. */ }
@@ -112,8 +105,10 @@ function onHelpClosed() {
 function aim(event: PointerEvent) {
   const rect = canvas.value?.getBoundingClientRect()
   if (!rect) return
-  game.aim = { x: Math.max(8, Math.min(WIDTH - 8, (event.clientX - rect.left) / rect.width * WIDTH)), y: Math.max(20, Math.min(HEIGHT - 124, (event.clientY - rect.top) / rect.height * HEIGHT)) }
+  game.aim.x = Math.max(8, Math.min(WIDTH - 8, (event.clientX - rect.left) / rect.width * WIDTH))
+  game.aim.y = Math.max(20, Math.min(HEIGHT - 124, (event.clientY - rect.top) / rect.height * HEIGHT))
   game.aimVisible = true
+  needsRedraw = true
 }
 
 function fire(event: PointerEvent) {
@@ -165,14 +160,20 @@ onMounted(() => {
   fullscreenSupported.value = !!document.fullscreenEnabled
   reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
   const ctx = canvas.value?.getContext('2d')
+  let renderedWidth = -1, renderedHeight = -1
   const resize = () => {
     if (!canvas.value || !ctx) return
     const bounds = canvas.value.getBoundingClientRect()
     const dpr = Math.min(window.devicePixelRatio || 1, 2)
-    canvas.value.width = Math.round(bounds.width * dpr)
-    canvas.value.height = Math.round(bounds.height * dpr)
+    const width = Math.round(bounds.width * dpr), height = Math.round(bounds.height * dpr)
+    if (renderedWidth === width && renderedHeight === height) return
+    if (canvas.value.width !== width) canvas.value.width = width
+    if (canvas.value.height !== height) canvas.value.height = height
+    renderedWidth = width
+    renderedHeight = height
     ctx.setTransform(canvas.value.width / WIDTH, 0, 0, canvas.value.height / HEIGHT, 0, 0)
     renderBattlefield(ctx, game, reducedMotion)
+    needsRedraw = false
   }
   resizeObserver = new ResizeObserver(resize)
   if (canvas.value) resizeObserver.observe(canvas.value)
@@ -180,8 +181,15 @@ onMounted(() => {
   const frame = (now: number) => {
     const dt = lastFrame ? (now - lastFrame) / 1000 : 0
     lastFrame = now
+    const phase = game.phase
+    const animate = phase !== 'paused' && (phase === 'playing' || (phase === 'ready' && !reducedMotion)
+      || game.shake > 0 || game.blasts.length > 0 || game.particles.length > 0
+      || game.cityExplosions.length > 0 || game.batteryExplosions.length > 0)
     game.update(dt)
-    if (ctx) renderBattlefield(ctx, game, reducedMotion)
+    if (ctx && (needsRedraw || animate || phase !== game.phase)) {
+      renderBattlefield(ctx, game, reducedMotion)
+      needsRedraw = false
+    }
     if (now - lastSync > 75) { sync(); lastSync = now }
     animation = requestAnimationFrame(frame)
   }
@@ -199,6 +207,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', keydown)
   document.removeEventListener('visibilitychange', onVisibilityChange)
   document.removeEventListener('fullscreenchange', onFullscreenChange)
+  game.onEvent = undefined
   audio.dispose()
 })
 </script>
