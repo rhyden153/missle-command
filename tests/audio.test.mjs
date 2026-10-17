@@ -51,3 +51,52 @@ test('failed recordings keep the procedural fallback and dispose releases pendin
   assert.equal(audio.sources.size,0)
   assert.ok(harness.nodes.every(node=>node.outputs.size===0))
 })
+
+test('each threat has a distinct sound in both styles and all voices obey mute and stop', async t => {
+  const harness = installAudioHarness()
+  t.after(() => harness.restore())
+  const audio = new GameAudio('city', 'air', 'battery', 'launch')
+  audio.unlock()
+  await flush()
+  const palettes = []
+  for (const style of ['classic', 'modern']) {
+    audio.style = style
+    const signatures = []
+    for (const event of ['bomber', 'ufo', 'payload', 'guidedBomb', 'evade']) {
+      audio.stop()
+      harness.commands.length = 0
+      audio.play(event)
+      const voices = harness.commands.filter(command => command[0] === 'start')
+      assert.ok(voices.length > 0, `${style} ${event}`)
+      signatures.push(JSON.stringify(voices.map(command => [command[1], command[3], command.at(-1)])))
+      audio.stop()
+      assert.equal(audio.sources.size, 0)
+      assert.ok(harness.nodes.every(node => node === audio.master || node.outputs.size === 0))
+    }
+    assert.equal(new Set(signatures).size, 5)
+    palettes.push(signatures)
+  }
+  for (let i = 0; i < 5; i++) assert.notEqual(palettes[0][i], palettes[1][i])
+  audio.muted = true
+  harness.commands.length = 0
+  for (const event of ['bomber', 'ufo', 'payload', 'guidedBomb', 'evade']) audio.play(event)
+  assert.equal(harness.commands.filter(command => command[0] === 'start').length, 0)
+  audio.dispose()
+})
+
+test('reinforcement rewards play a chime in either style and stop with the rest of the audio', t => {
+  const harness = installAudioHarness()
+  t.after(() => harness.restore())
+  const audio = new GameAudio('city', 'air', 'battery', 'launch')
+  for (const style of ['classic', 'modern']) {
+    audio.style = style
+    harness.commands.length = 0
+    audio.play('bonus')
+    const voices = harness.commands.filter(command => command[0] === 'start')
+    assert.equal(voices.length, 3)
+    assert.ok(voices.every(voice => voice[3] === (style === 'classic' ? 'square' : 'triangle')))
+    audio.stop()
+    assert.equal(audio.sources.size, 0)
+  }
+  audio.dispose()
+})

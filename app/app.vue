@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { MissileCommand, WIDTH, HEIGHT, MAX_AMMO } from './game/engine'
+import { MissileCommand, WIDTH, HEIGHT } from './game/engine'
+import type { ThreatStyle } from './game/engine'
 import { renderBattlefield } from './game/renderer'
 import { GameAudio } from './game/audio'
 import { readHudState } from './game/hud'
@@ -20,6 +21,7 @@ const arena = ref<HTMLElement | null>(null)
 const helpDialog = ref<HTMLDialogElement | null>(null)
 const audio = new GameAudio(cityExplosionUrl, airExplosionUrl, batteryExplosionUrl, launchThudUrl)
 const soundEnabled = ref(true)
+const threatStyle = ref<ThreatStyle>('modern')
 const isFullscreen = ref(false)
 const fullscreenSupported = ref(false)
 const fullscreenError = ref('')
@@ -75,6 +77,14 @@ function toggleSound() {
   audio.unlock()
   if (soundEnabled.value) audio.play('launch')
   try { localStorage.setItem('missile-command-sound', String(soundEnabled.value)) } catch { /* Storage is optional. */ }
+}
+
+function setThreatStyle(style: ThreatStyle) {
+  threatStyle.value = style
+  audio.stop()
+  audio.style = style
+  needsRedraw = true
+  try { localStorage.setItem('missile-command-threat-style', style) } catch { /* Storage is optional. */ }
 }
 
 async function toggleFullscreen() {
@@ -155,6 +165,10 @@ onMounted(() => {
     persistedBest = game.best
     soundEnabled.value = localStorage.getItem('missile-command-sound') !== 'false'
     audio.muted = !soundEnabled.value
+    if (localStorage.getItem('missile-command-threat-style') === 'classic') {
+      threatStyle.value = 'classic'
+      audio.style = 'classic'
+    }
   } catch { /* Private browsing can disable local storage. */ }
   game.onEvent = event => audio.play(event)
   fullscreenSupported.value = !!document.fullscreenEnabled
@@ -172,7 +186,7 @@ onMounted(() => {
     renderedWidth = width
     renderedHeight = height
     ctx.setTransform(canvas.value.width / WIDTH, 0, 0, canvas.value.height / HEIGHT, 0, 0)
-    renderBattlefield(ctx, game, reducedMotion)
+    renderBattlefield(ctx, game, reducedMotion, threatStyle.value)
     needsRedraw = false
   }
   resizeObserver = new ResizeObserver(resize)
@@ -187,7 +201,7 @@ onMounted(() => {
       || game.cityExplosions.length > 0 || game.batteryExplosions.length > 0)
     game.update(dt)
     if (ctx && (needsRedraw || animate || phase !== game.phase)) {
-      renderBattlefield(ctx, game, reducedMotion)
+      renderBattlefield(ctx, game, reducedMotion, threatStyle.value)
       needsRedraw = false
     }
     if (now - lastSync > 75) { sync(); lastSync = now }
@@ -238,7 +252,7 @@ onBeforeUnmount(() => {
           <div class="arena-hud">
             <div class="hud-stat wave-stat"><span class="micro-label">WAVE</span><div><span class="hud-value">{{ String(state.wave).padStart(2, '0') }}</span><span class="wave-slashes">///</span></div></div>
             <div class="hud-stat score-stat"><span class="micro-label">SCORE</span><span class="hud-value">{{ formatScore(state.score) }}</span></div>
-            <div class="hud-stat cities-stat"><span class="micro-label">CITIES ONLINE</span><span class="hud-value">{{ state.citiesAlive }}<span class="value-denominator">/ 6</span><span class="mini-cities"><i v-for="(city, index) in state.cities" :key="index" :class="{ lost: !city.alive }" /></span></span></div>
+            <div class="hud-stat cities-stat"><span class="micro-label">CITIES ONLINE</span><span class="hud-value">{{ state.citiesAlive }}<span class="value-denominator">/ {{ state.cities.length }}</span><span class="mini-cities"><i v-for="(city, index) in state.cities" :key="index" :class="{ lost: !city.alive }" /></span></span></div>
             <div class="hud-tools"><span class="live-indicator" :class="{ 'is-active': state.phase === 'playing', 'is-lost': state.phase === 'gameover' }"><span class="status-dot" />{{ state.phase === 'ready' ? 'STANDBY' : state.phase === 'playing' ? 'LIVE' : state.phase === 'paused' ? 'PAUSED' : state.phase === 'intermission' ? 'CLEAR' : 'OFFLINE' }}</span><button class="icon-button arena-tool" :disabled="!active" :aria-label="state.phase === 'paused' ? 'Resume game' : 'Pause game'" title="Pause / resume (P)" @click="pause"><AppIcon :name="state.phase === 'paused' ? 'play' : 'pause'" :size="17" /></button><button v-if="fullscreenSupported" class="icon-button arena-tool fullscreen-button" :aria-label="isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'" @click="toggleFullscreen"><AppIcon :name="isFullscreen ? 'collapse' : 'expand'" :size="17" /></button></div>
           </div>
           <div class="battlefield" :class="{ 'is-playing': state.phase === 'playing' }">
@@ -256,12 +270,12 @@ onBeforeUnmount(() => {
         </section>
 
         <aside class="command-sidebar" aria-label="Mission and battery controls">
-          <section class="mission-panel"><div class="panel-heading"><span class="micro-label">MISSION BRIEFING</span><AppIcon name="crosshair" :size="16" /></div><h2>Hold the line<span>.</span></h2><p>Intercept incoming missiles.<br>Keep your cities alive.<br>Survive as long as you can.</p><div class="mission-tip"><AppIcon name="bolt" :size="16" /><p>One well-placed explosion can start a <strong>chain reaction.</strong></p></div></section>
+          <section class="mission-panel"><div class="panel-heading"><span class="micro-label">MISSION BRIEFING</span><AppIcon name="crosshair" :size="16" /></div><h2>Hold the line<span>.</span></h2><p>Intercept incoming missiles.<br>Keep your cities alive.<br>Survive as long as you can.</p><div class="mission-tip"><AppIcon name="bolt" :size="16" /><p>One well-placed explosion can start a <strong>chain reaction.</strong></p></div><div class="threat-style"><span id="threat-style-label" class="micro-label">THREAT SPRITES + SOUND</span><div class="style-options" role="group" aria-labelledby="threat-style-label"><button :aria-pressed="threatStyle === 'classic'" @click="setThreatStyle('classic')">Classic</button><button :aria-pressed="threatStyle === 'modern'" @click="setThreatStyle('modern')">Modern</button></div><p>03 Bomber · 04 UFO · 05 Guided bomb</p></div></section>
           <section class="battery-panel">
-            <div class="panel-heading"><span class="micro-label">MISSILE BATTERIES</span><span class="ammo-total">{{ state.totalAmmo }}<span> / {{ MAX_AMMO * 3 }}</span></span></div>
+            <div class="panel-heading"><span class="micro-label">MISSILE BATTERIES</span><span class="ammo-total">{{ state.totalAmmo }}<span> / {{ state.maxAmmo }}</span></span></div>
             <button class="auto-select" :class="{ selected: state.selected === -1 }" :aria-pressed="state.selected === -1" @click="selectBattery(-1)"><span><span class="selection-dot" />Auto-select</span><kbd>A</kbd></button>
-            <button v-for="(battery, index) in state.batteries" :key="battery.name" class="battery-button" :class="{ selected: state.selected === index, depleted: !battery.alive || battery.ammo === 0 }" :aria-label="`Select ${battery.name} battery, ${battery.ammo} missiles remaining`" :aria-pressed="state.selected === index" @click="selectBattery(index)"><span class="battery-icon"><svg viewBox="0 0 30 30" fill="none" aria-hidden="true"><path d="M4 23h22l-5-6H9l-5 6Zm8-6v-5h6v5m-3-5V5m-3 4 3-4 3 4" stroke="currentColor" stroke-width="1.3" /><path d="M9 26h12" stroke="currentColor" /></svg></span><span class="battery-info"><span class="battery-name">{{ battery.name }}<span>{{ String(battery.ammo).padStart(2, '0') }}</span></span><span class="ammo-meter"><i v-for="n in 9" :key="n" :class="{ filled: battery.ammo >= n * 2 - 1 }" /></span></span><kbd>{{ index + 1 }}</kbd></button>
-            <p class="battery-footnote">Ammunition refills after every wave.</p>
+            <button v-for="(battery, index) in state.batteries" :key="battery.name" class="battery-button" :class="{ selected: state.selected === index, depleted: !battery.alive || battery.ammo === 0 }" :aria-label="`Select ${battery.name} battery, ${battery.ammo} missiles remaining`" :aria-pressed="state.selected === index" @click="selectBattery(index)"><span class="battery-icon"><svg viewBox="0 0 30 30" fill="none" aria-hidden="true"><path d="M4 23h22l-5-6H9l-5 6Zm8-6v-5h6v5m-3-5V5m-3 4 3-4 3 4" stroke="currentColor" stroke-width="1.3" /><path d="M9 26h12" stroke="currentColor" /></svg></span><span class="battery-info"><span class="battery-name">{{ battery.name }}<span>{{ String(battery.ammo).padStart(2, '0') }}</span></span><span class="ammo-meter"><i v-for="n in 9" :key="n" :class="{ filled: battery.ammo / battery.capacity > (n - 1) / 9 }" /></span></span><kbd>{{ index + 1 }}</kbd></button>
+            <p class="battery-footnote">Ammunition refills after every wave.<br>+10% shots every 100,000 points.<br>Bonus city every 150,000 points.</p><p v-if="state.bonusCities > 0" class="city-reserves" role="status">{{ state.bonusCities }} BONUS {{ state.bonusCities === 1 ? 'CITY' : 'CITIES' }} IN RESERVE</p>
           </section>
           <div class="sidebar-footer"><span class="status-dot" /><span>{{ missionLabel }}</span><AppIcon name="chevron" :size="14" /></div>
         </aside>
@@ -272,7 +286,7 @@ onBeforeUnmount(() => {
       <footer class="site-footer"><span>A TRIBUTE TO THE GOLDEN AGE OF ARCADES.</span><span class="footer-center">NO EXTRA LIVES. <span>MAKE THIS ONE COUNT.</span></span><span class="footer-coordinate"><span class="tiny-cross">✳</span> EST. 1980 <span class="footer-slash">/</span> REIMAGINED TODAY</span></footer>
     </main>
 
-    <dialog ref="helpDialog" class="help-dialog" aria-labelledby="help-title" @close="onHelpClosed" @click="($event.target === helpDialog) && closeHelp()"><div class="help-content"><div class="panel-heading"><span class="eyebrow">FIELD MANUAL / 001</span><button class="icon-button" aria-label="Close instructions" @click="closeHelp"><AppIcon name="close" /></button></div><h2 id="help-title">AIM. FIRE. SURVIVE.</h2><p>Defend six cities from the incoming barrage. Lose them all and the game ends.</p><dl class="help-controls"><div><dt>Move mouse / drag on screen</dt><dd>Aim</dd></div><div><dt>Click / tap / <kbd>SPACE</kbd></dt><dd>Launch missile</dd></div><div><dt>Arrow keys</dt><dd>Move crosshair</dd></div><div><dt><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></dt><dd>Select a battery</dd></div><div><dt><kbd>A</kbd></dt><dd>Auto-select battery</dd></div><div><dt><kbd>P</kbd> / <kbd>ESC</kbd></dt><dd>Pause / resume</dd></div><div><dt><kbd>M</kbd></dt><dd>Toggle sound</dd></div></dl><div class="help-tip"><AppIcon name="bolt" /><p><strong>Aim ahead of the threat.</strong> Your missiles explode at the point you choose. Catch incoming missiles in the blast to set off chain reactions and multiply your points.</p></div><p class="help-detail">Each battery carries 18 missiles and rearms between waves. Surviving cities earn 100 bonus points each, plus 5 for every unused missile. From wave 3, watch for missiles that split in midair.</p><button class="primary-button" @click="closeHelp">UNDERSTOOD<AppIcon name="arrow" :size="17" /></button></div></dialog>
+    <dialog ref="helpDialog" class="help-dialog" aria-labelledby="help-title" @close="onHelpClosed" @click="($event.target === helpDialog) && closeHelp()"><div class="help-content"><div class="panel-heading"><span class="eyebrow">FIELD MANUAL / 001</span><button class="icon-button" aria-label="Close instructions" @click="closeHelp"><AppIcon name="close" /></button></div><h2 id="help-title">AIM. FIRE. SURVIVE.</h2><p>Defend six cities from the incoming barrage. Lose them all and the game ends.</p><dl class="help-controls"><div><dt>Move mouse / drag on screen</dt><dd>Aim</dd></div><div><dt>Click / tap / <kbd>SPACE</kbd></dt><dd>Launch missile</dd></div><div><dt>Arrow keys</dt><dd>Move crosshair</dd></div><div><dt><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></dt><dd>Select a battery</dd></div><div><dt><kbd>A</kbd></dt><dd>Auto-select battery</dd></div><div><dt><kbd>P</kbd> / <kbd>ESC</kbd></dt><dd>Pause / resume</dd></div><div><dt><kbd>M</kbd></dt><dd>Toggle sound</dd></div></dl><div class="help-tip"><AppIcon name="bolt" /><p><strong>Aim ahead of the threat.</strong> Your missiles explode at the point you choose. Catch incoming missiles in the blast to set off chain reactions and multiply your points.</p></div><p class="help-detail">Each battery starts with 18 missiles and rearms between waves. Every 100,000 points increases total ammunition capacity by another 10%, compounded and rounded to whole shots, and immediately supplies the extra shots to surviving batteries. Every 150,000 points earns a bonus city: a lost city is restored after its explosion finishes, or the bonus is saved in reserve while all six cities are standing. Surviving cities earn 100 bonus points each, plus 5 for every unused missile. Splitting missiles appear from wave 3. Bombers arrive in wave 3, UFOs in wave 4, and guided bombs in wave 5, then gradually become more common. Each replaces one ordinary missile. Aircraft carry one missile; intercept them before they drop it. Guided bombs can briefly steer around blasts. Aim directly at them or overlap explosions. Choose Classic or Modern threat sprites and sounds in the mission panel.</p><button class="primary-button" @click="closeHelp">UNDERSTOOD<AppIcon name="arrow" :size="17" /></button></div></dialog>
   </div>
 </template>
 

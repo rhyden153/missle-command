@@ -7,7 +7,7 @@ test('simulation reuses live entity arrays through cleanup and restarts', () => 
   const game = new MissileCommand(() => 0.5)
   game.start()
   game.spawnTimer = 1000
-  const keys = ['enemies', 'missiles', 'blasts', 'particles', 'cityExplosions', 'batteryExplosions']
+  const keys = ['enemies', 'aircraft', 'missiles', 'blasts', 'particles', 'cityExplosions', 'batteryExplosions']
   const arrays = keys.map(key => game[key])
   game.fire(601, 200)
   game.cityExplosions.push({ x:205, y:532, age:5.49, duration:5.5 })

@@ -1,4 +1,4 @@
-import type { GameEvent } from './engine'
+import type { GameEvent, ThreatStyle } from './engine'
 
 type RecordingName = 'cityExplosion' | 'airExplosion' | 'batteryExplosion' | 'launchThud'
 type Recording = { url: string; buffer: AudioBuffer | null; loading: Promise<AudioBuffer | null> | null }
@@ -9,10 +9,12 @@ const RECORDING_EVENTS: Partial<Record<GameEvent, RecordingName>> = {
 const WAVE_NOTES = [330, 440, 660]
 const CLEAR_NOTES = [523, 659, 784, 1047]
 const OVER_NOTES = [330, 262, 196, 98]
+const BONUS_NOTES = [660, 880, 1320]
 const recording = (url: string): Recording => ({ url, buffer: null, loading: null })
 
 /** Procedural arcade effects and the supplied launch and explosion recordings. */
 export class GameAudio {
+  style: ThreatStyle = 'modern'
   private context: AudioContext | null = null
   private master: GainNode | null = null
   private noise: AudioBuffer | null = null
@@ -132,6 +134,41 @@ export class GameAudio {
     } else { this.tone(130, 35, 0.4, 0.22, 'sine'); this.burst(0.48, 0.38, 1800) }
   }
 
+  private threatSound(event: GameEvent) {
+    const classic = this.style === 'classic'
+    switch (event) {
+      case 'bomber':
+        // A low propeller pulse in classic mode, a layered jet rumble in modern.
+        if (classic) {
+          for (let i = 0; i < 5; i++) this.tone(72, 52, 0.13, 0.065, 'square', i * 0.1)
+        } else {
+          this.tone(76, 43, 0.95, 0.12, 'sawtooth')
+          this.tone(39, 28, 1.05, 0.12, 'sine')
+          this.burst(0.9, 0.12, 420)
+        }
+        break
+      case 'ufo':
+        for (let i = 0; i < 4; i++) {
+          this.tone(i % 2 ? 640 : 320, i % 2 ? 340 : 720, classic ? 0.1 : 0.2,
+            0.08, classic ? 'square' : 'sine', i * (classic ? 0.1 : 0.16))
+        }
+        if (!classic) this.tone(155, 110, 0.7, 0.06, 'triangle')
+        break
+      case 'payload':
+        this.tone(920, 190, classic ? 0.22 : 0.42, 0.09, classic ? 'square' : 'triangle')
+        if (!classic) this.burst(0.14, 0.08, 2400)
+        break
+      case 'guidedBomb':
+        this.tone(420, 1180, classic ? 0.3 : 0.65, 0.085, classic ? 'square' : 'sine')
+        this.tone(1180, 580, 0.2, 0.06, classic ? 'triangle' : 'sine', classic ? 0.3 : 0.55)
+        break
+      case 'evade':
+        this.tone(1200, 1800, 0.09, 0.06, classic ? 'square' : 'sine')
+        this.tone(1800, 850, 0.12, 0.05, classic ? 'square' : 'triangle', 0.08)
+        break
+    }
+  }
+
   play(event: GameEvent) {
     if (this.muted) return
     this.unlock()
@@ -141,10 +178,20 @@ export class GameAudio {
     if (event === 'impact' && ctx.currentTime - Math.max(this.lastPlayed.get('cityExplosion') ?? -Infinity, this.lastPlayed.get('batteryExplosion') ?? -Infinity) < 0.055) return
     // Keep simultaneous chain reactions from stacking into an overwhelming blast.
     const throttleEvent = event === 'intercept' ? 'explode' : event
-    if (ctx.currentTime - (this.lastPlayed.get(throttleEvent) ?? -Infinity) < 0.055) return
+    if (ctx.currentTime - (this.lastPlayed.get(throttleEvent) ?? -Infinity) < (event === 'evade' ? 0.3 : 0.055)) return
     this.lastPlayed.set(throttleEvent, ctx.currentTime)
     try {
       switch (event) {
+        case 'bonus':
+          for (let i = 0; i < BONUS_NOTES.length; i++) this.tone(BONUS_NOTES[i]!, BONUS_NOTES[i]!, 0.24, 0.12, this.style === 'classic' ? 'square' : 'triangle', i * 0.1)
+          break
+        case 'bomber':
+        case 'ufo':
+        case 'payload':
+        case 'guidedBomb':
+        case 'evade':
+          this.threatSound(event)
+          break
         case 'launch':
         case 'explode':
         case 'intercept':
