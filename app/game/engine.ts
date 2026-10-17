@@ -1,6 +1,5 @@
-export type Phase = 'ready' | 'playing' | 'paused' | 'intermission' | 'gameover'
+export type Phase = 'ready' | 'playing' | 'paused' | 'intermission' | 'gameover' | 'victory'
 export type Point = { x: number; y: number }
-export type ThreatStyle = 'classic' | 'modern'
 export type ThreatKind = 'missile' | 'bomber' | 'ufo' | 'guidedBomb'
 export type Missile = Point & {
   from: Point; target: Point; speed: number; alive: boolean; split: boolean
@@ -17,12 +16,14 @@ export type City = Point & { alive: boolean; name: string }
 export type Battery = Point & { ammo: number; capacity: number; name: string; alive: boolean }
 export type GroundExplosion = Point & { age: number; duration: number }
 export type GameEvent = 'launch' | 'explode' | 'intercept' | 'impact' | 'cityExplosion' | 'batteryExplosion' | 'wave' | 'clear' | 'over'
-  | 'bomber' | 'ufo' | 'payload' | 'guidedBomb' | 'evade' | 'bonus'
+  | 'bomber' | 'ufo' | 'payload' | 'guidedBomb' | 'evade' | 'bonus' | 'victory'
 
 export const WIDTH = 1200
 export const HEIGHT = 620
 export const GROUND = 532
 export const MAX_AMMO = 18
+export const FINAL_WAVE = 20
+export const VICTORY_DURATION = 14
 const BRAVO_AUTO_DISTANCE_PENALTY = 80
 export const CITY_NAMES = ['NEW HOPE', 'SOLACE', 'EDEN', 'HAVEN', 'AURORA', 'PROMISE']
 
@@ -86,6 +87,7 @@ export class MissileCommand {
   incoming = 0
   spawnTimer = 1
   intermission = 0
+  victoryTime = 0
   cooldown = 0
   shake = 0
   notice = ''
@@ -133,6 +135,8 @@ export class MissileCommand {
     this.cityMilestones = 0
     this.rewardNotice = ''
     this.wave = 1
+    this.intermission = 0
+    this.victoryTime = 0
     this.intercepted = 0
     this.launched = 0
     this.chain = 0
@@ -388,6 +392,10 @@ export class MissileCommand {
     dt = Math.min(Math.max(dt, 0), 0.05)
     if (this.phase === 'paused') return
     this.clock += dt
+    if (this.phase === 'victory') {
+      this.victoryTime = Math.min(VICTORY_DURATION, this.victoryTime + dt)
+      return
+    }
     if (this.phase === 'ready') return
     this.cooldown = Math.max(0, this.cooldown - dt)
     this.noticeTime = Math.max(0, this.noticeTime - dt)
@@ -489,10 +497,20 @@ export class MissileCommand {
       const bonus = this.citiesAlive * 100 + this.totalAmmo * 5
       this.addScore(bonus)
       this.restoreBonusCities()
-      this.phase = 'intermission'
-      this.intermission = 4
-      this.onEvent?.('clear')
-      this.showNotice(`SECTOR SECURED · +${bonus} SURVIVAL BONUS`, 4)
+      if (this.wave >= FINAL_WAVE) {
+        this.phase = 'victory'
+        this.victoryTime = 0
+        this.notice = ''
+        this.noticeTime = 0
+        this.rewardNotice = ''
+        this.aimVisible = false
+        this.onEvent?.('victory')
+      } else {
+        this.phase = 'intermission'
+        this.intermission = 4
+        this.onEvent?.('clear')
+        this.showNotice(`SECTOR SECURED · +${bonus} SURVIVAL BONUS`, 4)
+      }
     }
     this.showRewardNotice()
   }

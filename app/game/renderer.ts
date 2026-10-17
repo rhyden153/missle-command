@@ -1,5 +1,5 @@
 import { GROUND, HEIGHT, WIDTH, MissileCommand } from './engine'
-import type { Blast, GroundExplosion, Missile, ThreatKind, ThreatStyle } from './engine'
+import type { Blast, GroundExplosion, Missile, ThreatKind } from './engine'
 
 const GREEN = '#d6ee9c'
 const ORANGE = '#ee906b'
@@ -185,7 +185,63 @@ function renderNuclearExplosion(ctx: CanvasRenderingContext2D, explosion: Ground
   ctx.restore()
 }
 
-export function renderBattlefield(ctx: CanvasRenderingContext2D, game: MissileCommand, reducedMotion = false, style: ThreatStyle = 'modern') {
+const CELEBRATION_COLORS = ['#ffe19a', '#bcefa5', '#85e4f5', '#ffad91', '#c5b5ff'] as const
+const VICTORY_FIREWORKS = Array.from({ length: 16 }, (_, i) => ({
+  x: [140, 1040, 290, 910, 600][i % 5]! + Math.sin(i * 2.4) * 55,
+  y: 65 + (i * 47) % 165,
+  start: 0.2 + i * 0.65,
+  color: CELEBRATION_COLORS[i % CELEBRATION_COLORS.length]!,
+}))
+
+function renderVictory(ctx: CanvasRenderingContext2D, game: MissileCommand, reducedMotion: boolean) {
+  const time = reducedMotion ? 2.8 : game.victoryTime
+  ctx.save()
+  glow(ctx, WIDTH / 2, 230, 430, '#ffd37416')
+  for (const city of game.cities) if (city.alive) glow(ctx, city.x, GROUND - 15, 65, '#ffde8a20')
+
+  for (const firework of VICTORY_FIREWORKS) {
+    const age = time - firework.start
+    if (age < 0 || age > 2.2) continue
+    if (age < 0.5) {
+      const p = age / 0.5
+      const y = GROUND - (GROUND - firework.y) * (1 - (1 - p) ** 2)
+      segment(ctx, firework.x, y + 22, firework.x, y, '#ffe6af88', 1.4)
+      glow(ctx, firework.x, y, 8, '#fff0bc80')
+      continue
+    }
+    const burst = age - 0.5
+    const radius = 100 * (1 - Math.exp(-burst * 2.3))
+    ctx.globalAlpha = Math.max(0, 1 - burst / 1.7)
+    for (let i = 0; i < 28; i++) {
+      const angle = i / 28 * Math.PI * 2
+      const reach = radius * (i % 2 ? 0.75 : 1)
+      const x = firework.x + Math.cos(angle) * reach
+      const y = firework.y + Math.sin(angle) * reach + burst * burst * 22
+      segment(ctx, x - Math.cos(angle) * 8, y - Math.sin(angle) * 8 - 3, x, y, firework.color, 1.8)
+      ctx.fillStyle = '#fff7de'
+      ctx.fillRect(x - 1, y - 1, 2, 2)
+    }
+  }
+
+  // A finite confetti shower settles, leaving the victory card and rescued skyline.
+  for (let i = 0; i < 130; i++) {
+    const age = time - (i % 5) * 1.3
+    const lifetime = 4 + (i % 4) * 0.5
+    if (age < 0 || age > lifetime) continue
+    const x = (i * 197 + 41) % WIDTH + Math.sin(age * 2 + i) * 28
+    const y = -25 + age * (65 + i % 35) + age * age * 5
+    ctx.save()
+    ctx.globalAlpha = Math.min(1, age * 2, (lifetime - age) * 1.5)
+    ctx.translate(x, y)
+    ctx.rotate(i + age * (i % 2 ? 2 : -2))
+    ctx.fillStyle = CELEBRATION_COLORS[i % CELEBRATION_COLORS.length]!
+    ctx.fillRect(-2, -4, 4 + i % 3, 8 * Math.max(0.3, Math.abs(Math.cos(age * 3 + i))))
+    ctx.restore()
+  }
+  ctx.restore()
+}
+
+export function renderBattlefield(ctx: CanvasRenderingContext2D, game: MissileCommand, reducedMotion = false) {
   const time = reducedMotion ? 6 : game.clock
   ctx.save()
   ctx.fillStyle = '#10151e'
@@ -340,13 +396,13 @@ export function renderBattlefield(ctx: CanvasRenderingContext2D, game: MissileCo
     ctx.stroke()
   }
 
-  for (const craft of game.aircraft) renderThreatSprite(ctx, craft.kind, style, craft.x, craft.y, time, craft.direction)
+  for (const craft of game.aircraft) renderThreatSprite(ctx, craft.kind, craft.x, craft.y, time, craft.direction)
   for (const missile of game.enemies) {
     if (missile.kind === 'guidedBomb') {
       ctx.save()
       ctx.translate(missile.x, missile.y)
       ctx.rotate(-Math.asin(Math.max(-0.9, Math.min(0.9, (missile.vx ?? 0) / missile.speed))))
-      renderThreatSprite(ctx, 'guidedBomb', style, 0, 0, time, 1, missile.evading)
+      renderThreatSprite(ctx, 'guidedBomb', 0, 0, time, 1, missile.evading)
       ctx.restore()
     } else renderMissile(ctx, missile, false)
   }
@@ -387,6 +443,8 @@ export function renderBattlefield(ctx: CanvasRenderingContext2D, game: MissileCo
   }
   ctx.globalAlpha = 1
 
+  if (game.phase === 'victory') renderVictory(ctx, game, reducedMotion)
+
   if (game.aimVisible && game.phase === 'playing') {
     const { x, y } = game.aim
     ctx.strokeStyle = '#e1f6b4bb'
@@ -407,77 +465,86 @@ export function renderBattlefield(ctx: CanvasRenderingContext2D, game: MissileCo
   ctx.restore()
 }
 
-// Small code-native sprites stay sharp at every canvas size and need no asset downloads.
-const CLASSIC_SPRITES = {
-  bomber: [
-    '      11                ',
-    '       111              ',
-    '  1     1111            ',
-    '  11111111111111111     ',
-    '1111111111111111222111  ',
-    '  1111111111111111111111',
-    '  1     1111            ',
-    '       111              ',
-    '      11                ',
-  ],
-  ufo: [
-    '       2222       ',
-    '     22111122     ',
-    '    2111111112    ',
-    '  11111111111111  ',
-    '111111111111111111',
-    '  11211211211211  ',
-    '    1111111111    ',
-  ],
-  guidedBomb: [
-    '1  2  1',
-    '11 2 11',
-    ' 12221 ',
-    ' 11111 ',
-    ' 11211 ',
-    '  121  ',
-    '  111  ',
-    '   1   ',
-  ],
+// Swept wings project above and below a long fuselage to show a shallow bank.
+const BOMBER_SURFACES = {
+  farWing: [[7, -3], [-18, -17], [-25, -15], [-13, -3]],
+  farTail: [[-20, -3], [-31, -10], [-34, -9], [-28, -1]],
+  fin: [[-23, -3], [-30, -12], [-33, -12], [-30, 0]],
+  nearWing: [[8, 1], [-16, 18], [-25, 15], [-12, 2]],
+  nearTail: [[-22, 1], [-30, 8], [-35, 6], [-28, 0]],
+  cockpit: [[17, -4], [23, -3.5], [28, -1.5], [17, -2]],
 } as const
 
-export function renderThreatSprite(ctx: CanvasRenderingContext2D, kind: Exclude<ThreatKind, 'missile'>, style: ThreatStyle,
+function bomberSurface(ctx: CanvasRenderingContext2D, points: readonly Vertex[], fill: string | CanvasGradient, edge: string) {
+  ctx.beginPath()
+  points.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))
+  ctx.closePath()
+  ctx.fillStyle = fill
+  ctx.fill()
+  ctx.strokeStyle = edge
+  ctx.lineWidth = 0.65
+  ctx.stroke()
+}
+
+function renderBomber(ctx: CanvasRenderingContext2D, time: number) {
+  const exhaust = 3 + Math.sin(time * 19) * 0.5
+  glow(ctx, -31, 2, 10, '#f6b56a20')
+
+  // The distant wing and tail sit behind the fuselage and stay in shade.
+  bomberSurface(ctx, BOMBER_SURFACES.farWing, '#515e70', '#8997a8')
+  line(ctx, [[5, -3], [-18, -17], [-24, -15]], '#b4c0cc', 0.7)
+  bomberSurface(ctx, BOMBER_SURFACES.farTail, '#526071', '#8c9baa')
+  bomberSurface(ctx, BOMBER_SURFACES.fin, '#788697', '#b7c4cf')
+  segment(ctx, -30, -10, -28, -5, '#394553', 1)
+
+  const fuselage = ctx.createLinearGradient(0, -5, 0, 6)
+  fuselage.addColorStop(0, '#d5dfe5')
+  fuselage.addColorStop(0.3, '#9cabb9')
+  fuselage.addColorStop(0.6, '#617083')
+  fuselage.addColorStop(1, '#2a3545')
+  ctx.beginPath()
+  ctx.moveTo(36, 0)
+  ctx.bezierCurveTo(29, -1, 26, -4.5, 18, -5)
+  ctx.bezierCurveTo(7, -5.5, -15, -3.5, -29, -2.5)
+  ctx.lineTo(-32, 1.5)
+  ctx.bezierCurveTo(-17, 4.5, 8, 5, 23, 2)
+  ctx.quadraticCurveTo(31, 0.5, 36, 0)
+  ctx.closePath()
+  ctx.fillStyle = fuselage
+  ctx.fill()
+  ctx.strokeStyle = '#aab9c6'
+  ctx.lineWidth = 0.7
+  ctx.stroke()
+
+  // Recessed engines keep the tail compact, with a restrained amber exhaust.
+  for (const [x, y] of [[-28, 0], [-24, 3]] as const) {
+    segment(ctx, x, y, x + 9, y + 0.5, '#293441', 3)
+    segment(ctx, x, y, x + 1, y, '#b3b9b5', 2)
+    segment(ctx, x - exhaust, y, x - 0.5, y, '#e8ad7399', 1.3)
+  }
+
+  const wing = ctx.createLinearGradient(3, 0, -20, 18)
+  wing.addColorStop(0, '#a8b6c3')
+  wing.addColorStop(0.5, '#7c8c9d')
+  wing.addColorStop(1, '#445164')
+  bomberSurface(ctx, BOMBER_SURFACES.nearWing, wing, '#a5b4c1')
+  line(ctx, [[7, 1], [-16, 18], [-24, 15]], '#d1dbe1', 0.8)
+  line(ctx, [[-8, 5], [-18, 13], [-22, 13]], '#455263', 0.65)
+  bomberSurface(ctx, BOMBER_SURFACES.nearTail, '#8190a1', '#b0bec9')
+  bomberSurface(ctx, BOMBER_SURFACES.cockpit, '#213c50', '#89b5c8')
+  segment(ctx, 22, -3.7, 22.5, -2, '#a2b9c7', 0.6)
+  line(ctx, [[-10, -3.5], [12, -4.3], [17, -4]], '#e1e7e9', 0.65)
+  segment(ctx, 12, 2.6, 22, 1.5, '#303e50', 0.65)
+}
+
+export function renderThreatSprite(ctx: CanvasRenderingContext2D, kind: Exclude<ThreatKind, 'missile'>,
   x: number, y: number, time: number, direction = 1, evading = false) {
   ctx.save()
   ctx.translate(x, y)
   if (kind === 'bomber') ctx.scale(direction, 1)
   if (kind === 'guidedBomb') ctx.scale(0.7, 0.7)
-  if (style === 'classic') {
-    const rows = CLASSIC_SPRITES[kind]
-    const color = kind === 'bomber' ? '#ffd477' : kind === 'ufo' ? '#7aebff' : '#ff83d5'
-    for (let row = 0; row < rows.length; row++) {
-      for (let column = 0; column < rows[row]!.length; column++) {
-        const pixel = rows[row]![column]
-        if (pixel !== '1' && pixel !== '2') continue
-        ctx.fillStyle = pixel === '2' || evading ? '#fff5d9' : color
-        ctx.fillRect((column - rows[0].length / 2) * 2, (row - rows.length / 2) * 2, 2, 2)
-      }
-    }
-  } else if (kind === 'bomber') {
-    glow(ctx, -24, 0, 19, '#ff9d413d')
-    const metal = ctx.createLinearGradient(0, -13, 0, 13)
-    metal.addColorStop(0, '#f0d3a0')
-    metal.addColorStop(0.45, '#8c8e94')
-    metal.addColorStop(1, '#343d4b')
-    ctx.beginPath()
-    const hull = [[29, 1], [13, -5], [0, -6], [-12, -15], [-17, -15], [-10, -4], [-22, -4], [-27, -10], [-30, -10], [-27, 1], [-30, 10], [-26, 10], [-21, 4], [-9, 4], [-17, 15], [-11, 15], [2, 6], [16, 5]] as const
-    hull.forEach(([px, py], i) => i ? ctx.lineTo(px, py) : ctx.moveTo(px, py))
-    ctx.closePath()
-    ctx.fillStyle = metal
-    ctx.fill()
-    ctx.strokeStyle = '#f3c078'
-    ctx.lineWidth = 1
-    ctx.stroke()
-    line(ctx, [[-13, -1], [15, -1], [21, 1]], '#d4e4ed', 1)
-    segment(ctx, 9, -3, 15, -2, '#b6edff', 2)
-    for (const offset of [-6, 6]) {
-      segment(ctx, -18, offset, -26 - Math.sin(time * 19) * 2, offset, '#ffac50', 2)
-    }
+  if (kind === 'bomber') {
+    renderBomber(ctx, time)
   } else if (kind === 'ufo') {
     glow(ctx, 0, 3, 31, '#59dcff25')
     const dome = ctx.createLinearGradient(0, -13, 0, 2)
@@ -504,13 +571,13 @@ export function renderThreatSprite(ctx: CanvasRenderingContext2D, kind: Exclude<
     }
     segment(ctx, -7, 11, 7, 11, '#65e5ff', 2)
   } else {
-    glow(ctx, 0, 0, evading ? 23 : 16, evading ? '#ffe6b950' : '#fb7bcf30')
+    glow(ctx, 0, 0, evading ? 23 : 16, evading ? '#ffe6b950' : '#c4d58a30')
     const shell = ctx.createLinearGradient(-6, 0, 6, 0)
-    shell.addColorStop(0, '#a14892')
-    shell.addColorStop(0.45, '#ffcfec')
-    shell.addColorStop(1, '#793e7e')
+    shell.addColorStop(0, '#8a9b58')
+    shell.addColorStop(0.45, '#e3edbc')
+    shell.addColorStop(1, '#657540')
     ctx.fillStyle = shell
-    ctx.strokeStyle = evading ? '#fff3ca' : '#ff9ddd'
+    ctx.strokeStyle = evading ? '#fff3ca' : '#cbdc96'
     ctx.lineWidth = 1
     ctx.beginPath()
     ctx.moveTo(0, 11)
@@ -522,9 +589,9 @@ export function renderThreatSprite(ctx: CanvasRenderingContext2D, kind: Exclude<
     ctx.closePath()
     ctx.fill()
     ctx.stroke()
-    line(ctx, [[-4, -4], [-9, -9], [-8, 1], [-4, 3]], '#f395cf', 1.5)
-    line(ctx, [[4, -4], [9, -9], [8, 1], [4, 3]], '#f395cf', 1.5)
-    segment(ctx, 0, -12, 0, -16 - Math.sin(time * 16) * 2, '#ffc7eb', 2)
+    line(ctx, [[-4, -4], [-9, -9], [-8, 1], [-4, 3]], '#b7c97d', 1.5)
+    line(ctx, [[4, -4], [9, -9], [8, 1], [4, 3]], '#b7c97d', 1.5)
+    segment(ctx, 0, -12, 0, -16 - Math.sin(time * 16) * 2, '#e0ebaf', 2)
   }
   ctx.restore()
 }

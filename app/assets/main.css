@@ -28,11 +28,6 @@
   text-rendering: optimizeLegibility;
 }
 .collection-section { margin-top: 44px; }
-.threat-style { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border); }
-.style-options { display: flex; gap: 4px; margin-top: 9px; }
-.style-options button { flex: 1; min-height: 36px; border: 1px solid var(--border); background: #10150f; color: var(--muted); font-family: var(--mono); font-size: 11px; }
-.style-options button[aria-pressed='true'] { border-color: #73874c; color: var(--accent); background: #d4ee9910; }
-.threat-style p { font-family: var(--mono); font-size: 9px; line-height: 1.7; color: var(--muted); margin: 9px 0 0; }
 .city-reserves { color: var(--accent); font: 9px/1.7 var(--mono); margin: 12px 5px 0; }
 
 * { box-sizing: border-box; }
@@ -386,6 +381,42 @@ kbd { font-family: var(--mono); font-size: 9px; display: inline-flex; align-item
   .wave-stat { padding-right: 13px; } .hud-value { font-size: 19px; } .fullscreen-button { display: none; }
   .mission-panel { padding-left: 12px; padding-right: 12px; } .controls-strip { gap: 12px 15px; }
   .personal-best .micro-label { display: none; } .command-sidebar { grid-template-columns: 1fr 1.05fr; }
+}
+.live-indicator.is-victorious { color: #ffe09c; }
+.live-indicator.is-victorious .status-dot { background: #ffe09c; box-shadow: 0 0 10px #ffe09c55; }
+.game-overlay.victory-overlay { background: radial-gradient(ellipse at center, #101827e8 0%, #1018279c 42%, transparent 78%); padding: 18px 20px 28px; }
+.victory-medal { width: 84px; height: 84px; border: 1px solid #ffe2a155; border-radius: 50%; display: grid; place-items: center; position: relative; color: #ffe09c; background: radial-gradient(circle, #ffe2a122, #ffe2a105 70%); box-shadow: 0 0 55px #ffd37420; margin-bottom: 20px; animation: victory-arrival 850ms cubic-bezier(.2, 1.6, .4, 1) both; }
+.victory-medal > svg { filter: drop-shadow(0 2px 9px #ffd37450); }
+.victory-orbit { position: absolute; inset: -9px; border: 1px dashed #ffe2a144; border-radius: 50%; animation: victory-orbit 6s linear 2; }
+.victory-star { position: absolute; font-size: 20px; color: #ffe9b8; animation: victory-sparkle 1.6s ease-in-out 7; }
+.star-one { top: -12px; right: -14px; }
+.star-two { bottom: 0; left: -21px; font-size: 15px; animation-delay: .3s; color: #bcefa5; }
+.star-three { bottom: -10px; right: -10px; font-size: 12px; animation-delay: .6s; color: #85e4f5; }
+.victory-overlay .overlay-eyebrow { color: #ffe2a1; letter-spacing: 2.3px; }
+.game-overlay.victory-overlay h2 { font-size: clamp(52px, 5.5vw, 84px); letter-spacing: 3px; margin: 10px 0 12px; color: #fff0c8; text-shadow: 0 0 35px #ffdb8030; animation: victory-arrival 650ms 150ms both; }
+.game-overlay.victory-overlay .victory-message { color: #dce5d0; margin: 0 0 22px; }
+.victory-stats { display: flex; justify-content: center; gap: 28px; margin-bottom: 24px; }
+.victory-stats > div { display: flex; flex-direction: column; gap: 8px; }
+.victory-stats .micro-label { font-size: 8px; color: #b5c0aa; letter-spacing: 1px; }
+.victory-stats strong { color: #fff0c8; font-family: var(--mono); font-size: 23px; font-weight: 500; }
+.victory-stats small { font-size: 12px; color: #b5c0aa; }
+.victory-button { background: #ffe2a1; color: #252a1b; box-shadow: 0 0 28px #ffdf8a18; }
+.victory-button:hover { background: #ffedc3; box-shadow: 0 0 30px #ffdf8a33; }
+.victory-overlay .start-hint { margin-top: 14px; color: #bfc8b0; }
+@keyframes victory-arrival { from { opacity: 0; transform: translateY(15px) scale(.85); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes victory-orbit { to { transform: rotate(180deg); } }
+@keyframes victory-sparkle { 0%, 100% { opacity: .6; transform: scale(.8); } 50% { opacity: 1; transform: scale(1.2) rotate(15deg); } }
+@media (max-width: 600px) {
+  .game-overlay.victory-overlay { padding: 16px 12px 22px; }
+  .victory-medal { width: 58px; height: 58px; margin-bottom: 16px; }
+  .victory-medal > svg { width: 32px; height: 32px; }
+  .game-overlay.victory-overlay h2 { font-size: 54px; margin: 8px 0 10px; }
+  .victory-overlay .overlay-eyebrow { font-size: 7px; letter-spacing: 1.6px; }
+  .game-overlay.victory-overlay .victory-message { font-size: 10px; margin-bottom: 18px; }
+  .victory-stats { gap: 20px; margin-bottom: 20px; }
+  .victory-stats .micro-label { font-size: 6px; letter-spacing: .6px; }
+  .victory-stats strong { font-size: 20px; }
+  .victory-overlay .start-hint { margin-top: 12px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *:before, *:after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }

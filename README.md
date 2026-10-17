@@ -1,6 +1,6 @@
 # Missile Command
 
-A playable arcade defense game built with Nuxt 4, Vue 3, TypeScript, and Canvas 2D. Defend six cities with three missile batteries across increasingly difficult waves.
+A playable arcade defense game built with Nuxt 4, Vue 3, TypeScript, and Canvas 2D. Defend six cities with three missile batteries across 20 increasingly difficult waves.
 
 ## Run locally
 
@@ -12,6 +12,8 @@ npm run dev
 ```
 
 Open `http://localhost:3000`, then choose **Start defense** or press **Enter**.
+
+Clear wave 20 with at least one city standing to win the campaign. After the final threats and destruction effects finish, the game awards the last survival bonus and celebrates with fireworks, confetti, a trophy, and an original upbeat victory fanfare. The victory screen shows your final score, cities saved, and threats intercepted. Choose **Play again** or press **Enter** to start at wave 1. The celebration settles after 14 seconds; reduced-motion preferences show a static celebration instead. Music follows mute, replay, and tab-visibility controls.
 
 ## Controls
 
@@ -35,7 +37,7 @@ Bombers enter in wave 3, UFOs in wave 4, and guided bombs in wave 5, initially o
 
 Guided bombs steer away from nearby defensive explosions with limited turn speed and 1.35 seconds of evasion reserve. They always move toward the ground and remain vulnerable to direct hits and overlapping blasts. Aircraft and guided bombs award 100 points times the wave and chain multiplier; ordinary missiles retain their existing 25-point base value. An aircraft destroyed after dropping its missile awards points without counting its payload as intercepted.
 
-Choose **Classic** or **Modern** under **Threat sprites + sound** in the mission panel. Classic uses pixel sprites and square-wave propeller pulses, saucer bleeps, and guidance chirps. Modern uses shaded aircraft, a lit saucer, a finned guided bomb, jet rumble, electronic warbles, and tracking sweeps. Missile drops have a separate descending whistle. The setting is saved locally. These synthesized effects share the existing mute, pause, and restart controls and need no additional downloads.
+Threats use shaded aircraft, a lit saucer, a finned guided bomb, jet rumble, electronic warbles, and tracking sweeps. Missile drops have a separate descending whistle. These synthesized effects share the existing mute, pause, and restart controls and need no additional downloads.
 
 Destroyed cities produce an expanding nuclear fireball and a rising mushroom cloud that cools into smoke over 5.5 seconds, leaving a crater that remains through later waves until a bonus city restores the site or a new game starts. City destruction plays `assets/city-explosion.mp3` through the existing sound controls. All city explosions finish before the next-wave screen and its countdown appear. The final city's animation finishes before the game-over panel appears.
 
@@ -56,9 +58,9 @@ npm run build
 npm run test:browser
 ```
 
-The engine tests cover targeting, ammunition, interceptions, chain reactions, pause, city destruction, wave progression, splitting missiles, and game over. Browser tests run against the production build using an installed Google Chrome and start a local server automatically. They cover desktop controls, touch input, saved preferences, fullscreen, and responsive layouts. Screenshots and traces go into the ignored `.cache` directory.
+The engine tests cover targeting, ammunition, interceptions, chain reactions, pause, city destruction, wave progression, splitting missiles, game over, and victory after wave 20. Browser tests run against the production build using an installed Google Chrome and start a local server automatically. They cover desktop controls, touch input, saved preferences, fullscreen, responsive layouts, victory animation, music controls, replay, and reduced motion. Screenshots and traces go into the ignored `.cache` directory.
 
-Threat regression tests verify wave budgets, progressive introductions, single aircraft drops in both directions, payload cancellation, HUD counts, guided evasion and interception, departure before wave completion, both sprite sets, and both audio palettes.
+Threat regression tests verify wave budgets, progressive introductions, single aircraft drops in both directions, payload cancellation, HUD counts, guided evasion and interception, departure before wave completion, threat rendering, and synthesized sound playback.
 
 To preview the production build manually, run `npm run preview`.
 

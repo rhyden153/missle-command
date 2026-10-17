@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { MissileCommand, GROUND, MAX_AMMO } from '../app/game/engine.ts'
+import { MissileCommand, GROUND, MAX_AMMO, FINAL_WAVE, VICTORY_DURATION } from '../app/game/engine.ts'
 
 const advance = (game, seconds) => { for (let i = 0; i < Math.ceil(seconds / 0.025); i++) game.update(0.025) }
 const enemyAt = (x, y, target = { x, y: GROUND }) => ({ x, y, from: { x, y: 0 }, target, speed: 40, alive: true, split: false })
@@ -244,6 +244,66 @@ test('splitting missiles create an additional threat only once', () => {
   advance(game, 0.1)
   assert.equal(game.enemies.length, 2)
   assert.ok(game.enemies.every(enemy => !enemy.split))
+})
+
+test('wave 19 continues normally, but clearing wave 20 awards its final bonus and wins once', () => {
+  const game = quietGame(), events = []
+  game.onEvent = event => events.push(event)
+  game.wave = FINAL_WAVE - 1
+  game.incoming = 0
+  game.update(0.025)
+  assert.equal(game.phase, 'intermission')
+  advance(game, 4.1)
+  assert.equal(game.wave, FINAL_WAVE)
+  assert.equal(game.phase, 'playing')
+  game.incoming = 0
+  game.score = 99_990
+  const expected = game.score + game.citiesAlive * 100 + game.totalAmmo * 5
+  game.update(0.025)
+  assert.equal(game.phase, 'victory')
+  assert.equal(game.score, expected)
+  assert.equal(game.best, expected)
+  assert.equal(game.maxAmmo, 59)
+  assert.equal(events.filter(event => event === 'victory').length, 1)
+  const ammo = game.totalAmmo
+  assert.equal(game.fire(601, 200), false)
+  game.pause()
+  assert.equal(game.phase, 'victory')
+  advance(game, 30)
+  assert.equal(game.wave, FINAL_WAVE)
+  assert.equal(game.score, expected)
+  assert.equal(game.totalAmmo, ammo)
+  assert.equal(game.victoryTime, VICTORY_DURATION)
+  assert.equal(events.filter(event => event === 'victory').length, 1)
+  game.start()
+  assert.equal(game.phase, 'playing')
+  assert.equal(game.wave, 1)
+  assert.equal(game.score, 0)
+  assert.equal(game.best, expected)
+  assert.equal(game.victoryTime, 0)
+})
+
+test('victory waits for the last threat and destruction effects, and losing wave 20 remains a defeat', () => {
+  const game = quietGame()
+  game.wave = FINAL_WAVE
+  game.incoming = 0
+  game.enemies.push(enemyAt(300, 100))
+  game.update(0.025)
+  assert.equal(game.phase, 'playing')
+  game.enemies.length = 0
+  game.cities[0].alive = false
+  game.cityExplosions.push({ x: 205, y: GROUND, age: 0, duration: 5.5 })
+  game.batteryExplosions.push({ x: 84, y: GROUND, age: 0, duration: 5.5 })
+  advance(game, 5)
+  assert.equal(game.phase, 'playing')
+  advance(game, 0.6)
+  assert.equal(game.phase, 'victory')
+  game.start()
+  game.wave = FINAL_WAVE
+  game.incoming = 0
+  game.cities.forEach(city => { city.alive = false })
+  game.update(0.025)
+  assert.equal(game.phase, 'gameover')
 })
 
 test('a complete undefended game reaches game over instead of stalling between waves', () => {

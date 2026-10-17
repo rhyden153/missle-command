@@ -14,9 +14,9 @@ async function openThreatFixture(page: Page) {
     } else {
       await route.fulfill({ contentType: 'text/html', body: `
         <style>body{margin:0;background:#10151e;color:#ddd;font:14px monospace}canvas{display:block;width:1200px}button{padding:10px}</style>
-        <button id="classic">Classic</button><button id="modern">Modern</button><button id="sound">Enable sounds</button>
+        <button id="sound">Enable sounds</button>
         <canvas id="field" width="1200" height="620"></canvas>
-        <canvas id="atlas" width="1200" height="360"></canvas>
+        <canvas id="atlas" width="1200" height="180"></canvas>
         <script type="module">
           import {MissileCommand} from './engine.js';
           import {renderBattlefield,renderThreatSprite} from './renderer.js';
@@ -25,19 +25,18 @@ async function openThreatFixture(page: Page) {
           game.start();game.wave=5;game.incoming=0;game.spawnTimer=1000;
           game.aircraft.push(...['bomber','ufo'].map((kind,i)=>({kind,x:270+i*630,y:120,altitude:120,direction:i?-1:1,speed:100,dropX:i?850:320,dropped:false,alive:true,age:0,soundTimer:2.8})));
           game.enemies.push({x:600,y:265,from:{x:600,y:-10},target:{x:601,y:532},speed:65,alive:true,split:false,kind:'guidedBomb',vx:0,evasion:1.35,evading:false});
-          let style='modern'; const voices=[];
+          const voices=[];
           const start=OscillatorNode.prototype.start;
           OscillatorNode.prototype.start=function(...args){voices.push(this.type);return start.apply(this,args)};
           game.onEvent=event=>audio.play(event);
-          const render=()=>renderBattlefield(document.querySelector('#field').getContext('2d'),game,false,style);
+          const render=()=>renderBattlefield(document.querySelector('#field').getContext('2d'),game,false);
           const advance=seconds=>{for(let i=0;i<Math.ceil(seconds/0.025);i++)game.update(0.025);render()};
-          for(const value of ['classic','modern'])document.querySelector('#'+value).onclick=()=>{style=value;audio.stop();audio.style=value;render()};
           document.querySelector('#sound').onclick=()=>{audio.unlock();for(const [i,event] of ['bomber','ufo','guidedBomb','payload','evade'].entries())setTimeout(()=>audio.play(event),i*80)};
           const atlas=document.querySelector('#atlas').getContext('2d');
-          atlas.fillStyle='#080e19';atlas.fillRect(0,0,1200,360);
-          for(const [row,palette] of ['classic','modern'].entries())for(const [column,kind] of ['bomber','ufo','guidedBomb'].entries()){
-            atlas.fillStyle='#b9c7d6';atlas.font='14px monospace';atlas.fillText(palette.toUpperCase()+' / '+kind.toUpperCase(),60+column*400,30+row*180);
-            atlas.save();atlas.translate(200+column*400,100+row*180);atlas.scale(3,3);renderThreatSprite(atlas,kind,palette,0,0,2);atlas.restore();
+          atlas.fillStyle='#080e19';atlas.fillRect(0,0,1200,180);
+          for(const [column,kind] of ['bomber','ufo','guidedBomb'].entries()){
+            atlas.fillStyle='#b9c7d6';atlas.font='14px monospace';atlas.fillText(kind.toUpperCase(),60+column*400,30);
+            atlas.save();atlas.translate(200+column*400,100);atlas.scale(3,3);renderThreatSprite(atlas,kind,0,0,2);atlas.restore();
           }
           window.fixture={game,audio,render,advance,voices};render();
         </script>` })
@@ -47,15 +46,12 @@ async function openThreatFixture(page: Page) {
   await page.goto('/__threats/index.html')
 }
 
-test('both sprite sets render, aircraft drop once, and real Web Audio plays both palettes', async ({ page }) => {
+test('threat sprites render, aircraft drop once, and real Web Audio plays', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
   await openThreatFixture(page)
   await page.locator('#atlas').screenshot({ path: '.cache/threat-sprites.png' })
-  const modern = await page.locator('#field').screenshot({ path: '.cache/threats-modern.png' })
-  await page.getByRole('button', { name: 'Classic', exact: true }).click()
-  const classic = await page.locator('#field').screenshot({ path: '.cache/threats-classic.png' })
-  expect(Buffer.compare(modern, classic)).not.toBe(0)
+  await page.locator('#field').screenshot({ path: '.cache/threats.png' })
   // Each sprite changes visible pixels compared with the same scenery with no threats.
   const footprints = await page.evaluate(() => {
     const f = (window as any).fixture, ctx = document.querySelector<HTMLCanvasElement>('#field')!.getContext('2d')!
@@ -69,10 +65,7 @@ test('both sprite sets render, aircraft drop once, and real Web Audio plays both
   })
   expect(footprints.every(value => value > 1000)).toBe(true)
   await page.getByRole('button', { name: 'Enable sounds' }).click()
-  await expect.poll(() => page.evaluate(() => (window as any).fixture.voices.length)).toBeGreaterThanOrEqual(14)
-  expect(await page.evaluate(() => (window as any).fixture.voices.includes('square'))).toBe(true)
-  await page.getByRole('button', { name: 'Modern', exact: true }).click()
-  await page.getByRole('button', { name: 'Enable sounds' }).click()
+  await expect.poll(() => page.evaluate(() => (window as any).fixture.voices.length)).toBeGreaterThanOrEqual(12)
   await expect.poll(() => page.evaluate(() => (window as any).fixture.voices.includes('sawtooth'))).toBe(true)
   await page.evaluate(() => (window as any).fixture.advance(0.8))
   expect(await page.evaluate(() => (window as any).fixture.game.enemies.length)).toBe(3)
@@ -83,19 +76,16 @@ test('both sprite sets render, aircraft drop once, and real Web Audio plays both
   expect(errors).toEqual([])
 })
 
-test('the production game saves the sprite and sound style without restarting play', async ({ page }) => {
+test('the production game has one graphics and sound set and still supports pause', async ({ page }) => {
   await page.route('**/_vercel/insights/script.js', route => route.fulfill({ contentType: 'application/javascript', body: '' }))
   await page.goto('/')
-  await expect(page.getByRole('button', { name: 'Modern', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByRole('group', { name: 'THREAT SPRITES + SOUND' })).toHaveCount(0)
   await page.getByRole('button', { name: 'START DEFENSE' }).click()
   await page.keyboard.press('p')
-  await page.getByRole('button', { name: 'Classic', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'STAND BY.' })).toBeVisible()
-  expect(await page.evaluate(() => localStorage.getItem('missile-command-threat-style'))).toBe('classic')
-  await page.reload()
-  await expect(page.getByRole('button', { name: 'Classic', exact: true })).toHaveAttribute('aria-pressed', 'true')
-  await page.getByRole('button', { name: 'Modern', exact: true }).click()
-  expect(await page.evaluate(() => localStorage.getItem('missile-command-threat-style'))).toBe('modern')
+  await page.getByRole('button', { name: 'How to play' }).click()
+  await expect(page.getByRole('dialog')).toBeVisible()
+  await expect(page.locator('.help-detail')).toContainText('Guided bombs can briefly steer around blasts.')
 })
 
 test('upgraded ammo meters scale to capacity and reserve cities replace destroyed sites after the cloud clears', async ({ page }) => {
