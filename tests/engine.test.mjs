@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { MissileCommand, GROUND, MAX_AMMO } from '../app/game/engine.ts'
+import { MissileCommand, GROUND, MAX_AMMO, FINAL_WAVE, VICTORY_DURATION } from '../app/game/engine.ts'
 
 const advance = (game, seconds) => { for (let i = 0; i < Math.ceil(seconds / 0.025); i++) game.update(0.025) }
 const enemyAt = (x, y, target = { x, y: GROUND }) => ({ x, y, from: { x, y: 0 }, target, speed: 40, alive: true, split: false })
@@ -27,7 +27,7 @@ test('starting a new game restores cities, ammunition, and score while preservin
   assert.equal(game.missiles.length, 0)
 })
 
-test('auto targeting uses the nearest stocked battery and respects manual selection and cooldown', () => {
+test('auto targeting uses a stocked battery and respects manual selection and cooldown', () => {
   const game = quietGame()
   assert.equal(game.fire(100, 200), true)
   assert.equal(game.batteries[0].ammo, MAX_AMMO - 1)
@@ -41,6 +41,32 @@ test('auto targeting uses the nearest stocked battery and respects manual select
   assert.equal(game.fire(100, 200), false)
   assert.match(game.notice, /BATTERY EMPTY/)
   assert.equal(game.launched, 2)
+})
+
+test('auto selection widens Alpha and Charlie coverage while retaining Bravo in the center', () => {
+  for (const [x, selected] of [[370, 0], [390, 1], [601, 1], [810, 1], [830, 2]]) {
+    const game = quietGame()
+    assert.equal(game.fire(x, 200), true)
+    assert.equal(game.batteries[selected].ammo, MAX_AMMO - 1, `Battery selection at x=${x}`)
+    assert.equal(game.missiles[0].from.x, game.batteries[selected].x)
+  }
+})
+
+test('wider side coverage falls back when unavailable and allows manual Bravo selection', () => {
+  const game = quietGame()
+  game.batteries[0].ammo = 0
+  assert.equal(game.fire(370, 200), true)
+  assert.equal(game.batteries[1].ammo, MAX_AMMO - 1)
+  advance(game, 0.2)
+  game.batteries[2].alive = false
+  assert.equal(game.fire(830, 200), true)
+  assert.equal(game.batteries[1].ammo, MAX_AMMO - 2)
+  advance(game, 0.2)
+  game.batteries[0].ammo = MAX_AMMO
+  game.selectBattery(1)
+  assert.equal(game.fire(370, 200), true)
+  assert.equal(game.batteries[1].ammo, MAX_AMMO - 3)
+  assert.equal(game.batteries[0].ammo, MAX_AMMO)
 })
 
 test('a launched missile explodes at its target and triggers scoring chain reactions', () => {
@@ -78,6 +104,114 @@ test('ground impacts destroy cities and the final loss ends the game', () => {
   assert.equal(game.citiesAlive, 0)
   assert.equal(game.phase, 'gameover')
   assert.equal(game.fire(200, 200), false)
+  assert.equal(game.cityExplosions.length, 6)
+  advance(game, 2)
+  assert.ok(game.cityExplosions.every(explosion => explosion.age >= 2))
+  assert.equal(game.phase, 'gameover')
+  advance(game, 4)
+  assert.equal(game.cityExplosions.length, 0)
+})
+
+test('only newly destroyed cities create nuclear explosions and their audio event', () => {
+  const game = quietGame()
+  const events = []
+  game.onEvent = event => events.push(event)
+  const city = game.cities[0]
+  game.enemies = [enemyAt(city.x, GROUND - 1)]
+  advance(game, 0.1)
+  assert.equal(game.cityExplosions.length, 1)
+  assert.equal(game.cityExplosions[0].x, city.x)
+  assert.equal(events.filter(event => event === 'cityExplosion').length, 1)
+  game.enemies = [enemyAt(city.x, GROUND - 1), enemyAt(game.batteries[0].x, GROUND - 1)]
+  advance(game, 0.1)
+  assert.equal(game.cityExplosions.length, 1)
+  assert.equal(events.filter(event => event === 'cityExplosion').length, 1)
+  assert.equal(game.batteries[0].alive, false)
+})
+
+test('city destruction freezes while paused, expires, and clears on restart', () => {
+  const game = quietGame()
+  game.enemies = [enemyAt(game.cities[0].x, GROUND - 1)]
+  advance(game, 0.1)
+  game.pause()
+  const before = JSON.stringify(game.cityExplosions)
+  advance(game, 3)
+  assert.equal(JSON.stringify(game.cityExplosions), before)
+  game.pause()
+  advance(game, 5.6)
+  assert.equal(game.cityExplosions.length, 0)
+  game.enemies = [enemyAt(game.cities[1].x, GROUND - 1)]
+  advance(game, 0.1)
+  assert.equal(game.cityExplosions.length, 1)
+  game.start()
+  assert.equal(game.cityExplosions.length, 0)
+})
+
+test('the next-wave screen and countdown wait for the last city explosion to finish', () => {
+  const game = quietGame()
+  const events = []
+  game.onEvent = event => events.push(event)
+  game.enemies = [enemyAt(game.cities[0].x, GROUND - 1)]
+  advance(game, 1)
+  game.incoming = 0
+  game.enemies = [enemyAt(game.cities[1].x, GROUND - 1)]
+  advance(game, 4.6)
+  assert.equal(game.cityExplosions.length, 1)
+  assert.equal(game.phase, 'playing')
+  assert.equal(game.wave, 1)
+  assert.equal(game.score, 0)
+  assert.equal(game.intermission, 0)
+  assert.equal(events.includes('clear'), false)
+  advance(game, 0.8)
+  assert.equal(game.phase, 'playing')
+  advance(game, 0.2)
+  assert.equal(game.cityExplosions.length, 0)
+  assert.equal(game.phase, 'intermission')
+  assert.ok(game.intermission > 3.8)
+  assert.equal(game.score, 4 * 100 + 54 * 5)
+  assert.equal(events.filter(event => event === 'clear').length, 1)
+  advance(game, 4.1)
+  assert.equal(game.wave, 2)
+  assert.equal(game.phase, 'playing')
+  assert.equal(game.citiesAlive, 4)
+})
+
+test('battery destruction animates once, pauses, finishes before the next wave, and resets', () => {
+  const game = quietGame()
+  const events = []
+  game.onEvent = event => events.push(event)
+  const battery = game.batteries[1]
+  game.enemies = [enemyAt(battery.x, GROUND - 1)]
+  advance(game, 0.1)
+  assert.equal(battery.alive, false)
+  assert.equal(battery.ammo, 0)
+  assert.equal(game.citiesAlive, 6)
+  assert.equal(game.batteryExplosions.length, 1)
+  assert.equal(game.batteryExplosions[0].x, battery.x)
+  game.enemies = [enemyAt(battery.x, GROUND - 1)]
+  advance(game, 0.1)
+  assert.equal(game.batteryExplosions.length, 1)
+  assert.equal(events.filter(event => event === 'batteryExplosion').length, 1)
+  game.pause()
+  const age = game.batteryExplosions[0].age
+  advance(game, 2)
+  assert.equal(game.batteryExplosions[0].age, age)
+  game.pause()
+  game.incoming = 0
+  advance(game, 5.2)
+  assert.equal(game.phase, 'playing')
+  advance(game, 0.2)
+  assert.equal(game.phase, 'intermission')
+  assert.equal(game.batteryExplosions.length, 0)
+  advance(game, 4.1)
+  assert.equal(game.wave, 2)
+  assert.equal(battery.alive, true)
+  assert.equal(battery.ammo, MAX_AMMO)
+  game.enemies = [enemyAt(battery.x, GROUND - 1)]
+  advance(game, 0.1)
+  assert.equal(game.batteryExplosions.length, 1)
+  game.start()
+  assert.equal(game.batteryExplosions.length, 0)
 })
 
 test('clearing a wave awards one survival bonus, pauses the countdown, and rearms batteries', () => {
@@ -112,6 +246,66 @@ test('splitting missiles create an additional threat only once', () => {
   assert.ok(game.enemies.every(enemy => !enemy.split))
 })
 
+test('wave 19 continues normally, but clearing wave 20 awards its final bonus and wins once', () => {
+  const game = quietGame(), events = []
+  game.onEvent = event => events.push(event)
+  game.wave = FINAL_WAVE - 1
+  game.incoming = 0
+  game.update(0.025)
+  assert.equal(game.phase, 'intermission')
+  advance(game, 4.1)
+  assert.equal(game.wave, FINAL_WAVE)
+  assert.equal(game.phase, 'playing')
+  game.incoming = 0
+  game.score = 99_990
+  const expected = game.score + game.citiesAlive * 100 + game.totalAmmo * 5
+  game.update(0.025)
+  assert.equal(game.phase, 'victory')
+  assert.equal(game.score, expected)
+  assert.equal(game.best, expected)
+  assert.equal(game.maxAmmo, 59)
+  assert.equal(events.filter(event => event === 'victory').length, 1)
+  const ammo = game.totalAmmo
+  assert.equal(game.fire(601, 200), false)
+  game.pause()
+  assert.equal(game.phase, 'victory')
+  advance(game, 30)
+  assert.equal(game.wave, FINAL_WAVE)
+  assert.equal(game.score, expected)
+  assert.equal(game.totalAmmo, ammo)
+  assert.equal(game.victoryTime, VICTORY_DURATION)
+  assert.equal(events.filter(event => event === 'victory').length, 1)
+  game.start()
+  assert.equal(game.phase, 'playing')
+  assert.equal(game.wave, 1)
+  assert.equal(game.score, 0)
+  assert.equal(game.best, expected)
+  assert.equal(game.victoryTime, 0)
+})
+
+test('victory waits for the last threat and destruction effects, and losing wave 20 remains a defeat', () => {
+  const game = quietGame()
+  game.wave = FINAL_WAVE
+  game.incoming = 0
+  game.enemies.push(enemyAt(300, 100))
+  game.update(0.025)
+  assert.equal(game.phase, 'playing')
+  game.enemies.length = 0
+  game.cities[0].alive = false
+  game.cityExplosions.push({ x: 205, y: GROUND, age: 0, duration: 5.5 })
+  game.batteryExplosions.push({ x: 84, y: GROUND, age: 0, duration: 5.5 })
+  advance(game, 5)
+  assert.equal(game.phase, 'playing')
+  advance(game, 0.6)
+  assert.equal(game.phase, 'victory')
+  game.start()
+  game.wave = FINAL_WAVE
+  game.incoming = 0
+  game.cities.forEach(city => { city.alive = false })
+  game.update(0.025)
+  assert.equal(game.phase, 'gameover')
+})
+
 test('a complete undefended game reaches game over instead of stalling between waves', () => {
   let seed = 31
   const game = new MissileCommand(() => { seed = (seed * 16807) % 2147483647; return seed / 2147483647 })
@@ -141,5 +335,6 @@ test('audio events follow launches, detonations, interceptions, impacts, and wav
   game.enemies = game.cities.map(city => enemyAt(city.x, GROUND - 1))
   advance(game, 0.1)
   assert.equal(events.filter(event => event === 'impact').length, 6)
+  assert.equal(events.filter(event => event === 'cityExplosion').length, 6)
   assert.equal(events.at(-1), 'over')
 })
