@@ -49,6 +49,12 @@ Destroyed batteries use the same nuclear fireball and mushroom cloud at 60% of t
 
 Firing a missile plays `assets/launch-thud.mp3`, with the same mute, pause, and restart behavior as the explosion samples.
 
+## Global leaderboards
+
+The shared `neogames-ui` layer provides weekly and all-time top 10 boards. Open **High scores** to view them; an active defense pauses while the dialog is open. After defeat or victory, qualifying new device bests offer a three-letter initials form, with retry and skip controls. Your existing personal best remains saved locally.
+
+Connect the shared Redis database to the Vercel project and supply `PACMAN_SCORES_REDIS_URL`, the environment variable selected in `nuxt.config.ts`. The game namespace is `missle-command`; scores stay separate from other games in the shared database. Local and preview runs use separate key prefixes. Weekly scores reset Monday at 00:00 UTC. Gameplay remains available when the leaderboard service is unavailable.
+
 ## Checks
 
 ```sh

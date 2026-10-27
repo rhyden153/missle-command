@@ -11,6 +11,7 @@ const transpile = (source: string) => ts.transpileModule(source, {
 
 // Compile the real UI with test-only access to its engine; no production debug hooks.
 async function openVictoryFixture(page: Page) {
+  await page.route('**/api/leaderboard', route => route.fulfill({ json: { week: '2026-10-26', resetsAt: Date.now() + 86400000, weekly: [], allTime: [] } }))
   await page.route('**/__victory/**', async route => {
     const path = new URL(route.request().url()).pathname.replace('/__victory/', '')
     if (path === 'index.html') {
@@ -22,11 +23,14 @@ async function openVictoryFixture(page: Page) {
         </script>` })
     } else if (path === 'vue.js') {
       await route.fulfill({ contentType: 'application/javascript', body: await readFile(require.resolve('vue/dist/vue.esm-browser.prod.js'), 'utf8') })
-    } else if (path === 'app.js' || path === 'icon.js') {
-      let source = await readFile(path === 'app.js' ? 'app/app.vue' : 'app/components/AppIcon.vue', 'utf8')
+    } else if (path === 'app.js' || path === 'icon.js' || path === 'submission.js') {
+      let source = await readFile(path === 'app.js' ? 'app/app.vue' : path === 'submission.js' ? 'app/components/LeaderboardSubmission.vue' : 'app/components/AppIcon.vue', 'utf8')
+      if (path === 'submission.js') source = source.replace('<script setup lang="ts">', `<script setup lang="ts">import {ref,computed,onMounted} from 'vue'; import {useLeaderboard} from './leaderboard.js';`)
       if (path === 'app.js') {
         source = source.replace('<script setup lang="ts">', `<script setup lang="ts">
           import {ref,shallowRef,computed,nextTick,onMounted,onBeforeUnmount} from 'vue'
+          import {useLeaderboard} from './leaderboard.js'
+          import LeaderboardSubmission from './submission.js'
           const useHead = (_: unknown) => {}
         `).replace('const soundEnabled = ref(true)', 'Object.assign(window, { fixture: { game, audio } })\nconst soundEnabled = ref(true)')
       }
@@ -36,6 +40,17 @@ async function openVictoryFixture(page: Page) {
         .replaceAll('from "vue"', 'from "./vue.js"').replaceAll("from 'vue'", "from './vue.js'")
         .replace(/from '(.\/game\/\w+)'/g, "from '$1.js'").replaceAll('../assets/', './assets/')
       await route.fulfill({ contentType: 'application/javascript', body })
+    } else if (path === 'leaderboard.js') {
+      const layer = 'node_modules/.c12/github_rhyden153_neogames_Q5ELxM44KC'
+      const source = await readFile(`${layer}/app/composables/useLeaderboard.ts`, 'utf8')
+      const rules = await readFile(`${layer}/shared/utils/leaderboard.ts`, 'utf8')
+      const adapter = `import {ref} from './vue.js';
+        const states = new Map();
+        function useState(key, init) { if (!states.has(key)) states.set(key, ref(init())); return states.get(key); }
+        function useRuntimeConfig() { return {public:{leaderboard:{game:'missle-command'}}}; }
+        async function $fetch(url, options) { const response = await fetch(url, options && {method:options.method,headers:{'Content-Type':'application/json'},body:JSON.stringify(options.body)}); const data = await response.json(); if (!response.ok) throw {data}; return data; }
+      `
+      await route.fulfill({contentType:'application/javascript',body:transpile(adapter + rules + source)})
     } else if (/^game\/(engine|renderer|audio|hud)\.js$/.test(path)) {
       const source = await readFile(`app/${path.replace('.js', '.ts')}`, 'utf8')
       await route.fulfill({ contentType: 'application/javascript', body: transpile(source).replace("from './engine'", "from './engine.js'") })
@@ -77,6 +92,70 @@ async function clearFinalWave(page: Page) {
   await page.clock.runFor(150)
   await expect(page.getByRole('heading', { name: 'VICTORY!' })).toBeVisible()
 }
+
+test('qualified victory score validates initials, retries submission, and displays both ranks', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await openVictoryFixture(page)
+  let posts = 0
+  await page.route('**/api/leaderboard', async route => {
+    if (route.request().method() === 'GET') return route.fulfill({ json: { weekly: [], allTime: [] } })
+    const body = route.request().postDataJSON()
+    expect(body).toEqual({ initials: 'ABC', score: 245870, detail: 'Victory · Wave 20', boards: ['allTime', 'weekly'] })
+    posts++
+    if (posts === 1) return route.fulfill({ status: 503, json: { statusMessage: 'Try saving again.' } })
+    return route.fulfill({ json: { weekly: [], allTime: [], ranks: { weekly: 1, allTime: 2 } } })
+  })
+  await clearFinalWave(page)
+  const input = page.getByRole('textbox', { name: 'Leaderboard initials' })
+  await expect(input).toBeFocused()
+  await page.getByRole('button', { name: 'SAVE SCORE', exact: true }).click()
+  await expect(page.getByRole('alert')).toHaveText('Enter three letters.')
+  await input.fill('ab1')
+  await expect(input).toHaveValue('AB')
+  await input.fill('abc')
+  await page.getByRole('button', { name: 'SAVE SCORE', exact: true }).click()
+  await expect(page.getByRole('alert')).toHaveText('Try saving again.')
+  await page.getByRole('button', { name: 'SAVE SCORE', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: '#1 this week' })).toHaveText('#1 this week · #2 all time')
+  expect(posts).toBe(2)
+  expect(await page.evaluate(() => localStorage.getItem('neogames:initials'))).toBe('ABC')
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await page.screenshot({ path: '.cache/leaderboard-victory-mobile.png', fullPage: true })
+  await page.getByRole('button', { name: 'PLAY AGAIN' }).click()
+  await expect(input).toHaveCount(0)
+})
+
+test('defeat waits for explosions, offers skip, and ignores qualification from an earlier run', async ({ page }) => {
+  await openVictoryFixture(page)
+  await page.getByRole('button', { name: 'START DEFENSE' }).click()
+  await page.evaluate(() => {
+    const game = (window as any).fixture.game
+    game.score = 1234
+    for (const city of game.cities) city.alive = false
+    game.cityExplosions.push({ x: 100, y: 500, age: 0, duration: 5.5 })
+    game.phase = 'gameover'
+  })
+  await page.clock.runFor(150)
+  await expect(page.getByRole('textbox', { name: 'Leaderboard initials' })).toHaveCount(0)
+  await page.evaluate(() => { (window as any).fixture.game.cityExplosions.length = 0 })
+  await page.clock.runFor(150)
+  await expect(page.getByRole('textbox', { name: 'Leaderboard initials' })).toBeVisible()
+  await page.getByRole('button', { name: 'Skip', exact: true }).click()
+  await expect(page.getByRole('textbox', { name: 'Leaderboard initials' })).toHaveCount(0)
+  let release!: () => void
+  const held = new Promise<void>(resolve => { release = resolve })
+  let requested!: () => void
+  const started = new Promise<void>(resolve => { requested = resolve })
+  await page.route('**/api/leaderboard', async route => { requested(); await held; await route.fulfill({ json: { weekly: [], allTime: [] } }) })
+  await page.getByRole('button', { name: 'DEFEND AGAIN' }).click()
+  await page.evaluate(() => { const game = (window as any).fixture.game; game.score = 9999; game.phase = 'gameover' })
+  await page.clock.runFor(150)
+  await started
+  await page.getByRole('button', { name: 'DEFEND AGAIN' }).click()
+  release()
+  await page.clock.runFor(150)
+  await expect(page.getByRole('textbox', { name: 'Leaderboard initials' })).toHaveCount(0)
+})
 
 test('clearing the finale celebrates, saves the final score, obeys mute, and replays from wave one', async ({ page }) => {
   const errors: string[] = []

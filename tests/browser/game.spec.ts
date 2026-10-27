@@ -5,6 +5,40 @@ test.beforeEach(async ({ context }) => {
   await context.route('**/_vercel/insights/script.js', route => route.fulfill({ contentType: 'application/javascript', body: '' }))
 })
 
+test('global scores show both boards, handle errors, and pause an active defense', async ({ page }) => {
+  let offline = true
+  await page.route('**/api/leaderboard', route => offline
+    ? route.fulfill({ status: 503, json: { statusMessage: 'Offline' } })
+    : route.fulfill({ json: { week: '2026-10-26', resetsAt: Date.now() + 86400000,
+      weekly: [{ initials: 'ACE', score: 3210, detail: 'Wave 7', at: Date.now() }],
+      allTime: [{ initials: 'BOB', score: 98765, detail: 'Victory · Wave 20', at: Date.now() }] } }))
+  await page.goto('/')
+  await page.getByRole('button', { name: 'START DEFENSE' }).click()
+  await page.getByRole('button', { name: 'High scores', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'THE HALL OF FAME.' })
+  await expect(dialog).toBeVisible()
+  await expect(page.locator('.arena-status')).toContainText('SYSTEM PAUSED')
+  await expect(dialog).toContainText('Couldn’t reach the leaderboard.')
+  await page.keyboard.press('p')
+  await expect(page.locator('.arena-status')).toContainText('SYSTEM PAUSED')
+  offline = false
+  await dialog.getByRole('button', { name: 'Retry' }).click()
+  await expect(dialog).toContainText('ACE')
+  await dialog.getByRole('button', { name: 'All time', exact: true }).click()
+  await expect(dialog).toContainText('BOB')
+  for (const width of [320, 390, 768, 1440]) {
+    await page.setViewportSize({ width, height: 900 })
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    const bounds = await dialog.boundingBox()
+    expect(bounds!.x).toBeGreaterThanOrEqual(0)
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width)
+  }
+  await page.screenshot({ path: '.cache/global-leaderboard.png', fullPage: true })
+  await page.keyboard.press('Escape')
+  await expect(dialog).not.toBeVisible()
+  await expect(page.locator('.arena-status')).toContainText('DEFENSE ACTIVE')
+})
+
 test('desktop controls, pause, manual, fullscreen, and saved preferences work', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))

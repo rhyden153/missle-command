@@ -421,3 +421,27 @@ kbd { font-family: var(--mono); font-size: 9px; display: inline-flex; align-item
 @media (prefers-reduced-motion: reduce) {
   *, *:before, *:after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+/* Global leaderboard */
+.score-tabs, .score-submit-actions { display: flex; justify-content: center; gap: 22px; }
+.score-tabs { justify-content: flex-start; margin: 22px 0 12px; }
+.score-tabs button[aria-pressed="true"] { color: var(--accent); text-decoration: underline; text-underline-offset: 7px; }
+.global-score-list { list-style: none; margin: 22px 0; padding: 0; }
+.global-score-list li { display: grid; grid-template-columns: 24px 38px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--border); font: 12px var(--mono); }
+.global-score-list small { display: block; color: var(--muted); font-size: 10px; margin-top: 5px; overflow-wrap: anywhere; }
+.global-score-list time { color: var(--muted); font-size: 10px; }
+.leaderboard-submission { pointer-events: auto; margin: 0 0 18px; max-width: 100%; }
+.leaderboard-submission label { display: flex; align-items: center; flex-direction: column; gap: 10px; font: 9px var(--mono); color: var(--accent); }
+.leaderboard-submission input { width: 100px; padding: 8px; background: var(--bg); color: var(--text); border: 1px solid var(--accent); text-align: center; font: 22px var(--mono); letter-spacing: 5px; }
+.score-submit-actions { margin-top: 10px; }
+.game-overlay .leaderboard-submission p { margin: 10px 0; }
+.leaderboard-submission [role="alert"] { color: #ffbb9f; }
+.battlefield:has(.leaderboard-submission) { min-height: 650px; }
+@media (max-width: 600px) {
+  .scores-button { min-width: 32px; min-height: 36px; justify-content: center; }
+  .scores-button span { display: none; }
+  .site-header { height: auto; min-height: 69px; flex-wrap: wrap; padding-top: 12px; padding-bottom: 12px; }
+  .header-actions { margin-left: auto; }
+  .battlefield:has(.leaderboard-submission) { min-height: 620px; }
+  .global-score-list li { gap: 8px; font-size: 11px; }
+}
