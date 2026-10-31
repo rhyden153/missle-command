@@ -8,7 +8,7 @@ export type Missile = Point & {
 }
 export type Aircraft = Point & {
   kind: 'bomber' | 'ufo'; direction: number; speed: number; altitude: number
-  dropX: number; dropped: boolean; alive: boolean; age: number; soundTimer: number
+  dropX: number; dropped: boolean; alive: boolean; age: number
 }
 export type Blast = Point & { age: number; duration: number; maxRadius: number; radius: number; friendly: boolean; chain: number }
 export type Particle = Point & { vx: number; vy: number; life: number; maxLife: number; color: string }
@@ -272,7 +272,7 @@ export class MissileCommand {
       this.aircraft.push({
         kind, x: direction === 1 ? -32 : WIDTH + 32, y: altitude, altitude, direction,
         speed: (kind === 'bomber' ? 85 : 105) + Math.min(this.wave, 20) * 2,
-        dropX: 240 + this.random() * (WIDTH - 480), dropped: false, alive: true, age: 0, soundTimer: 2.8,
+        dropX: 240 + this.random() * (WIDTH - 480), dropped: false, alive: true, age: 0,
       })
       this.onEvent?.(kind)
       return
@@ -377,11 +377,6 @@ export class MissileCommand {
           })
           this.onEvent?.('payload')
         }
-      }
-      craft.soundTimer -= dt
-      if (craft.soundTimer <= 0 && craft.x > 0 && craft.x < WIDTH) {
-        this.onEvent?.(craft.kind)
-        craft.soundTimer = 2.8
       }
       if (craft.x < -48 || craft.x > WIDTH + 48) craft.alive = false
     }

@@ -70,6 +70,7 @@ let pausedForHelp = false
 let needsRedraw = true
 
 function sync() {
+  audio.syncThreats(game)
   void recordFinishedGame()
   const next = readHudState(game, state.value)
   if (next !== state.value) { state.value = next; needsRedraw = true }
@@ -225,6 +226,7 @@ onMounted(() => {
       || game.shake > 0 || game.blasts.length > 0 || game.particles.length > 0
       || game.cityExplosions.length > 0 || game.batteryExplosions.length > 0)
     game.update(dt)
+    audio.syncThreats(game)
     if (ctx && (needsRedraw || animate || phase !== game.phase)) {
       renderBattlefield(ctx, game, reducedMotion)
       needsRedraw = false

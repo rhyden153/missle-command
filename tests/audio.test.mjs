@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { GameAudio } from '../app/game/audio.ts'
+import { MissileCommand, GROUND, WIDTH } from '../app/game/engine.ts'
 import { installAudioHarness } from './helpers/audio-context.mjs'
 const flush=()=>new Promise(resolve=>setImmediate(resolve))
 
@@ -77,6 +78,123 @@ test('each threat has a distinct sound and all voices obey mute and stop', async
   for (const event of ['bomber', 'ufo', 'payload', 'guidedBomb', 'evade']) audio.play(event)
   assert.equal(harness.commands.filter(command => command[0] === 'start').length, 0)
   audio.dispose()
+})
+
+test('threat audio stays continuous, shares voices, and stops only when the last threat of a kind disappears', t => {
+  const harness = installAudioHarness()
+  t.after(() => harness.restore())
+  const audio = new GameAudio('city', 'air', 'battery', 'launch')
+  t.after(() => audio.dispose())
+  const game = {
+    phase: 'playing',
+    aircraft: [{ kind: 'bomber', alive: true }, { kind: 'bomber', alive: true }, { kind: 'ufo', alive: true }],
+    enemies: [{ kind: 'guidedBomb', alive: true }, { kind: 'missile', alive: true }],
+  }
+  audio.syncThreats(game)
+  const voices = [...audio.sources.keys()]
+  const nodeCount = harness.nodes.length
+  assert.equal(voices.length, 9)
+  assert.equal(audio.threatLoops.size, 3)
+  // Continuous oscillators have no scheduled end, unlike the old short cues.
+  assert.equal(harness.commands.filter(command => command[0] === 'stop').length, 0)
+  harness.contexts[0].currentTime = 60
+  for (let frame = 0; frame < 200; frame++) audio.syncThreats(game)
+  assert.equal(harness.nodes.length, nodeCount)
+  assert.deepEqual([...audio.sources.keys()], voices)
+  game.aircraft.shift()
+  audio.syncThreats(game)
+  assert.equal(audio.sources.size, 9)
+  game.aircraft[0].alive = false
+  audio.syncThreats(game)
+  assert.equal(audio.sources.size, 6)
+  assert.ok(voices.slice(0, 3).every(source => source.outputs.size === 0))
+  game.aircraft.length = 0
+  game.enemies[0].alive = false
+  audio.syncThreats(game)
+  assert.equal(audio.sources.size, 0)
+  assert.equal(audio.threatLoops.size, 0)
+  assert.ok(harness.nodes.every(node => node === audio.master || node.outputs.size === 0))
+})
+
+test('continuous threat audio follows interceptions, aircraft departures, and smart bomb impacts', t => {
+  const harness = installAudioHarness()
+  t.after(() => harness.restore())
+  const audio = new GameAudio('city', 'air', 'battery', 'launch')
+  t.after(() => audio.dispose())
+  const game = new MissileCommand(() => 0.5)
+  game.start()
+  game.incoming = 1
+  game.spawnTimer = 1000
+  for (const kind of ['bomber', 'ufo', 'guidedBomb']) game.spawnEnemy(kind)
+  Object.assign(game.aircraft[0], { x: 300, y: 100, altitude: 100, dropped: true })
+  Object.assign(game.aircraft[1], { x: 900, y: 100, altitude: 100, dropped: true })
+  audio.syncThreats(game)
+  assert.equal(audio.threatLoops.size, 3)
+  game.blasts.push({ x: 300, y: 100, age: 0.5, duration: 2, radius: 66, maxRadius: 66, friendly: true, chain: 0 })
+  game.update(0.025)
+  audio.syncThreats(game)
+  assert.equal(game.aircraft.length, 1)
+  assert.equal(audio.threatLoops.has('bomber'), false)
+  assert.equal(audio.threatLoops.size, 2)
+  Object.assign(game.aircraft[0], { x: WIDTH + 50, direction: 1 })
+  game.update(0.025)
+  audio.syncThreats(game)
+  assert.equal(game.aircraft.length, 0)
+  assert.equal(audio.threatLoops.has('ufo'), false)
+  const bomb = game.enemies[0]
+  Object.assign(bomb, { x: 600, y: GROUND - 1, target: { x: 600, y: GROUND } })
+  game.update(0.05)
+  audio.syncThreats(game)
+  assert.equal(game.enemies.length, 0)
+  assert.equal(audio.sources.size, 0)
+  assert.equal(audio.threatLoops.size, 0)
+})
+
+test('continuous threat sounds stop and resume with pause and mute, and clean up on restart, end, and disposal', t => {
+  const harness = installAudioHarness()
+  t.after(() => harness.restore())
+  const audio = new GameAudio('city', 'air', 'battery', 'launch')
+  t.after(() => audio.dispose())
+  const game = new MissileCommand(() => 0.5)
+  game.start()
+  for (const kind of ['bomber', 'ufo', 'guidedBomb']) game.spawnEnemy(kind)
+  audio.syncThreats(game)
+  assert.equal(audio.sources.size, 9)
+  game.pause()
+  audio.syncThreats(game)
+  assert.equal(audio.sources.size, 0)
+  game.pause()
+  audio.syncThreats(game)
+  assert.equal(audio.sources.size, 9)
+  audio.muted = true
+  audio.syncThreats(game)
+  assert.equal(audio.sources.size, 0)
+  audio.muted = false
+  audio.syncThreats(game)
+  assert.equal(audio.sources.size, 9)
+  audio.stop()
+  assert.equal(audio.threatLoops.size, 0)
+  audio.syncThreats(game)
+  assert.equal(audio.sources.size, 9)
+  for (const phase of ['intermission', 'gameover', 'victory', 'ready']) {
+    game.phase = phase
+    audio.syncThreats(game)
+    assert.equal(audio.sources.size, 0, phase)
+    game.phase = 'playing'
+    audio.syncThreats(game)
+    assert.equal(audio.sources.size, 9)
+  }
+  game.start()
+  audio.syncThreats(game)
+  assert.equal(audio.sources.size, 0)
+  game.spawnEnemy('bomber')
+  audio.syncThreats(game)
+  assert.ok(audio.sources.size > 0)
+  audio.dispose()
+  audio.syncThreats(game)
+  assert.equal(audio.sources.size, 0)
+  assert.equal(audio.threatLoops.size, 0)
+  assert.ok(harness.nodes.every(node => node.outputs.size === 0))
 })
 
 test('reinforcement rewards play a chime and stop with the rest of the audio', t => {

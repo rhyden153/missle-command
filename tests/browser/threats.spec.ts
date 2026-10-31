@@ -88,6 +88,47 @@ test('the production game has one graphics and sound set and still supports paus
   await expect(page.locator('.help-detail')).toContainText('Guided bombs can briefly steer around blasts.')
 })
 
+test('threat ambience remains audible after the spawn cues and releases the real Web Audio graph', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  await openThreatFixture(page)
+  await page.evaluate(() => {
+    const f = (window as any).fixture
+    document.querySelector<HTMLButtonElement>('#sound')!.onclick = () => {
+      f.audio.unlock()
+      f.audio.syncThreats(f.game)
+      f.analyser = f.audio.context.createAnalyser()
+      f.audio.master.connect(f.analyser)
+    }
+  })
+  await page.getByRole('button', { name: 'Enable sounds' }).click()
+  // The previous sounds all expired within 1.05 seconds. Sample well after that.
+  await page.waitForTimeout(1600)
+  const sustained = await page.evaluate(() => {
+    const f = (window as any).fixture
+    const samples = new Float32Array(f.analyser.fftSize)
+    f.analyser.getFloatTimeDomainData(samples)
+    return {
+      loops: f.audio.threatLoops.size,
+      voices: f.audio.sources.size,
+      rms: Math.sqrt(samples.reduce((sum, value) => sum + value * value, 0) / samples.length),
+    }
+  })
+  expect(sustained.loops).toBe(3)
+  expect(sustained.voices).toBe(9)
+  expect(sustained.rms).toBeGreaterThan(0.001)
+  expect(await page.evaluate(() => {
+    const f = (window as any).fixture
+    const voices = [...f.audio.sources.keys()] as AudioScheduledSourceNode[]
+    f.game.aircraft.length = 0
+    f.game.enemies.length = 0
+    f.audio.syncThreats(f.game)
+    return { loops: f.audio.threatLoops.size, voices: f.audio.sources.size, released: voices.every(source => source.onended === null) }
+  })).toEqual({ loops: 0, voices: 0, released: true })
+  await page.evaluate(() => (window as any).fixture.audio.dispose())
+  expect(errors).toEqual([])
+})
+
 test('upgraded ammo meters scale to capacity and reserve cities replace destroyed sites after the cloud clears', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))

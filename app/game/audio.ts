@@ -1,4 +1,4 @@
-import type { GameEvent } from './engine'
+import type { GameEvent, MissileCommand } from './engine'
 
 type RecordingName = 'cityExplosion' | 'airExplosion' | 'batteryExplosion' | 'launchThud'
 type Recording = { url: string; buffer: AudioBuffer | null; loading: Promise<AudioBuffer | null> | null }
@@ -6,8 +6,11 @@ const RECORDING_EVENTS: Partial<Record<GameEvent, RecordingName>> = {
   launch: 'launchThud', explode: 'airExplosion', intercept: 'airExplosion',
   cityExplosion: 'cityExplosion', batteryExplosion: 'batteryExplosion',
 }
-const WAVE_NOTES = [330, 440, 660]
-const CLEAR_NOTES = [523, 659, 784, 1047]
+// Two short salutes, then a triumphant C–F–G–C cadence.
+const CLEAR_FANFARE: readonly (readonly [readonly number[], number])[] = [
+  [[60, 64, 67], 0.5], [[60, 64, 67], 0.5], [[60, 64, 67], 1],
+  [[60, 65, 69], 1], [[55, 62, 67], 1], [[60, 64, 67, 72], 3],
+]
 const OVER_NOTES = [330, 262, 196, 98]
 const BONUS_NOTES = [660, 880, 1320]
 // An original C-major fanfare: rising brass-like melody over chords and a bouncing bass.
@@ -28,6 +31,13 @@ const VICTORY_CHORDS = [
 const VICTORY_BASS = [48, 43, 41, 48, 45, 41, 43, 48] as const
 const noteFrequency = (note: number) => 440 * 2 ** ((note - 69) / 12)
 const recording = (url: string): Recording => ({ url, buffer: null, loading: null })
+const THREAT_LOOPS = {
+  bomber: { frequency: 65, type: 'sawtooth', volume: 0.12, modulation: 8, depth: 6 },
+  ufo: { frequency: 520, type: 'sine', volume: 0.17, modulation: 3.3, depth: 190 },
+  guidedBomb: { frequency: 850, type: 'sine', volume: 0.18, modulation: 1.8, depth: 300 },
+} as const
+type LoopingThreat = keyof typeof THREAT_LOOPS
+const LOOPING_THREATS = Object.keys(THREAT_LOOPS) as LoopingThreat[]
 
 /** Procedural arcade effects and the supplied launch and explosion recordings. */
 export class GameAudio {
@@ -35,6 +45,7 @@ export class GameAudio {
   private master: GainNode | null = null
   private noise: AudioBuffer | null = null
   private sources = new Map<AudioScheduledSourceNode, () => void>()
+  private threatLoops = new Map<LoopingThreat, () => void>()
   private lastPlayed = new Map<GameEvent, number>()
   private isMuted = false
   private recordings: Record<RecordingName, Recording>
@@ -181,6 +192,99 @@ export class GameAudio {
     }
   }
 
+  private startThreatLoop(kind: LoopingThreat) {
+    const ctx = this.context!
+    const profile = THREAT_LOOPS[kind]
+    const sources: OscillatorNode[] = []
+    const gains: GainNode[] = []
+    const stop = () => {
+      for (const source of sources) {
+        try { source.stop() } catch { /* Already stopped. */ }
+        const cleanup = this.sources.get(source)
+        if (cleanup) cleanup()
+        else source.disconnect()
+      }
+      for (const gain of gains) gain.disconnect()
+    }
+    const oscillator = (frequency: number, type: OscillatorType) => {
+      const source = ctx.createOscillator()
+      sources.push(source)
+      source.type = type
+      source.frequency.value = frequency
+      return source
+    }
+    const gain = (volume: number) => {
+      const node = ctx.createGain()
+      gains.push(node)
+      node.gain.value = volume
+      return node
+    }
+    try {
+      const carrier = oscillator(profile.frequency, profile.type)
+      const volume = gain(profile.volume)
+      volume.gain.setValueAtTime(0.0001, ctx.currentTime)
+      volume.gain.exponentialRampToValueAtTime(profile.volume, ctx.currentTime + 0.04)
+      carrier.connect(volume)
+      // A quiet lower voice gives the engine, warble, and guidance whine body.
+      const bass = oscillator(profile.frequency / 2, kind === 'bomber' ? 'sine' : 'triangle')
+      const bassVolume = gain(kind === 'bomber' ? 0.09 : 0.045)
+      bass.connect(bassVolume)
+      bassVolume.connect(this.master!)
+      volume.connect(this.master!)
+      const modulation = oscillator(profile.modulation, kind === 'guidedBomb' ? 'triangle' : 'sine')
+      const depth = gain(profile.depth)
+      modulation.connect(depth)
+      depth.connect(carrier.frequency)
+      for (const source of sources) this.startSource(source)
+      return stop
+    } catch (error) { stop(); throw error }
+  }
+
+  /** Share one continuous voice per kind so multiple threats never stack their volume. */
+  syncThreats(game: Pick<MissileCommand, 'phase' | 'aircraft' | 'enemies'>) {
+    for (const kind of LOOPING_THREATS) {
+      const present = !this.muted && !this.disposed && game.phase === 'playing'
+        && (kind === 'guidedBomb'
+          ? game.enemies.some(enemy => enemy.alive && enemy.kind === kind)
+          : game.aircraft.some(craft => craft.alive && craft.kind === kind))
+      if (!present) {
+        this.threatLoops.get(kind)?.()
+        this.threatLoops.delete(kind)
+      } else if (!this.threatLoops.has(kind)) {
+        this.unlock()
+        if (!this.context || !this.master || this.context.state === 'closed') continue
+        try { this.threatLoops.set(kind, this.startThreatLoop(kind)) }
+        catch { /* Continuous audio must never interrupt gameplay. */ }
+      }
+    }
+  }
+
+  private waveKlaxon() {
+    // Three raspy, falling horn blasts finish before the first incoming threat.
+    for (let i = 0; i < 3; i++) {
+      const delay = i * 0.43
+      this.tone(390, 310, 0.32, 0.12, 'square', delay, 0.7)
+      this.tone(195, 155, 0.32, 0.1, 'sawtooth', delay, 0.7)
+    }
+  }
+
+  private waveClearFanfare() {
+    const beat = 0.3
+    let position = 0
+    for (const [chord, beats] of CLEAR_FANFARE) {
+      const delay = position * beat
+      const duration = beats * beat * 0.9
+      for (const note of chord) {
+        const frequency = noteFrequency(note)
+        this.tone(frequency, frequency, duration, 0.065, 'triangle', delay, 0.65)
+        this.tone(frequency * 2, frequency * 2, duration, 0.018, 'sawtooth', delay, 0.55)
+      }
+      const bass = noteFrequency(chord[0]!) / 2
+      this.tone(bass, bass, duration, 0.12, 'triangle', delay, 0.6)
+      position += beats
+    }
+  }
+
   private victoryMusic() {
     const beat = 0.4
     let position = 0
@@ -255,10 +359,10 @@ export class GameAudio {
           this.fallback(event)
           break
         case 'wave':
-          for (let i = 0; i < WAVE_NOTES.length; i++) this.tone(WAVE_NOTES[i]!, WAVE_NOTES[i]!, 0.22, 0.13, 'square', i * 0.14)
+          this.waveKlaxon()
           break
         case 'clear':
-          for (let i = 0; i < CLEAR_NOTES.length; i++) this.tone(CLEAR_NOTES[i]!, CLEAR_NOTES[i]!, 0.36, 0.16, 'triangle', i * 0.12)
+          this.waveClearFanfare()
           break
         case 'over':
           for (let i = 0; i < OVER_NOTES.length; i++) this.tone(OVER_NOTES[i]!, OVER_NOTES[i]! * 0.9, 0.55, 0.19, 'triangle', i * 0.24)
@@ -269,6 +373,8 @@ export class GameAudio {
 
   stop() {
     this.playbackGeneration++
+    for (const stop of this.threatLoops.values()) stop()
+    this.threatLoops.clear()
     for (const [source, cleanup] of this.sources) {
       try { source.stop() } catch { /* Already ended. */ }
       cleanup()
